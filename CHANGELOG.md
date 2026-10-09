@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.0.4
+- First published GitHub release. Adds the release workflow, which publishes a release whenever the version changes, and the HACS validation workflow.
+- No change to how the card works; it is the same as v1.0.3.
+
 ## v1.0.3
 - Grid import/export, solar and home: a sensor without long-term statistics no longer shows silent zeros; it is read from the recorder history instead.
 - Each energy flow falls back to its power sensor (integrated over the day) when the energy sensor is missing or shows no change today, e.g. a lagging smart-meter feed. Grid power alone is now enough for import and export.

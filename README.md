@@ -64,6 +64,8 @@ The tariff periods use a small YAML box inside the editor:
 
 Any hour not listed uses **Standard export rate**. When export periods are set, the timeline shows two bands, **Buy** and **Sell**. Leave them out if your export rate is flat; the flat rate is still used for today's income.
 
+**Export price entity.** If your export price lives in its own entity, pick it under **Tariff and cost**; it takes priority over the export periods. Past hours come from its recorded history. Upcoming hours come from a list of rates in its attributes, if it has one, for example Octopus Energy's *export current day rates* event or Nord Pool's `raw_today` / `raw_tomorrow`. Without such a list, the Sell band stops after the current rate period. Units such as GBP/kWh and p/kWh are converted, and the browser console (F12) says which parts of the entity were used.
+
 **Timeline length** (under **Show or hide**) is 24, 36 or 48 hours, with now always in the centre. The past half comes from your history, reaching back into yesterday; the future half comes from the weather and solar forecasts, reaching into tomorrow. Each midnight is marked with the day's name, and every sunrise and sunset in view is marked at the top.
 
 ## What each entity needs
@@ -106,6 +108,8 @@ standard_rate: 0.245
 export_rate: 0.15
 export_tariff:
   - { start: "16:00", end: "19:00", rate: 0.29, type: peak }
+# or, instead of export_tariff, an entity with your export price:
+# export_rate_entity: event.octopus_energy_electricity_xxxx_export_current_day_rates
 timeline_hours: "24"
 ```
 

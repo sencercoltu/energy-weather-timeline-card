@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.0
+- Export price entity (optional): the export rate can come from its own entity instead of fixed periods. Past hours use its recorded history; upcoming hours use a rate list in its attributes when it has one (Octopus Energy day-rates events, Nord Pool raw_today / raw_tomorrow). Half-hourly prices are averaged per hour for today's income, and the Sell band shows them at half-hour resolution, coloured by how they compare with the usual rate in view. GBP/kWh, p/kWh and per-MWh units are converted. One console line says what was used.
+
 ## v1.1.0
 - The timeline slides: now is always in the centre, with 24, 36 or 48 hours in view (Timeline length). Past hours come from history and reach back into yesterday; forecast hours reach into tomorrow, including tomorrow's solar forecast. Each midnight is marked with the day's name and every sunrise and sunset in view is marked.
 - Export tariff periods (optional), shown as a second band (Buy / Sell), and export income for today. The money tile shows import cost and export income separately, and the net turns green as "Today's earnings" when income is larger.

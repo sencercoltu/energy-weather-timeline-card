@@ -13,12 +13,12 @@ It was built and checked against Home Assistant 2026.10. It is a single file wit
 
 ## Install with HACS
 
-[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=YOUR_GITHUB_USERNAME&repository=energy-weather-timeline-card&category=plugin)
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=sencercoltu&repository=energy-weather-timeline-card&category=plugin)
 
 Or add it by hand:
 
 1. Open **HACS → ⋮ → Custom repositories**.
-2. Repository: `https://github.com/YOUR_GITHUB_USERNAME/energy-weather-timeline-card`. Type: **Dashboard**.
+2. Repository: `https://github.com/sencercoltu/energy-weather-timeline-card`. Type: **Dashboard**.
 3. Search HACS for **Energy & Weather Timeline Card**, open it and select **Download**.
 4. Reload the browser.
 
@@ -55,10 +55,10 @@ The tariff periods use a small YAML box inside the editor:
 
 ## What each entity needs
 
-- **Energy sensors** (solar, home, grid import, grid export, rain gauge) must be cumulative meters with `state_class: total` or `total_increasing`. The card reads Home Assistant's hourly statistics for them. These are the same sensors the Energy dashboard uses.
+- **Energy sensors** (solar, home, grid import, grid export, rain gauge) are cumulative meters, the same ones the Energy dashboard uses. The card reads their hourly statistics. A sensor without statistics (no `state_class`) is read from the recorder history instead. If an energy sensor is missing, or shows no change today while the matching power sensor shows a flow, the card integrates that power sensor over the day instead; for grid power, positive counts as import and negative as export. The browser console (F12) says which source each flow came from.
 - **Battery state of charge, weather and import price** are read from today's recorder history.
 - **Weather** must support hourly forecasts. The card subscribes to them, so the forecast hours update live.
-- **Solar forecast**: if you leave the entity empty, the card uses whatever forecast is set up in the Energy dashboard (Forecast.Solar or Open-Meteo Solar Forecast). For Solcast, pick its *forecast today* sensor; the card reads its `detailedHourly` or `detailedForecast` attribute.
+- **Solar forecast**: pick a *forecast today* sensor whose attributes hold the hour-by-hour (or half-hourly, 15-minute) forecast, as Solcast and Open-Meteo Solar Forecast do. The card finds the series in the attributes whatever its layout and works out the unit by matching the sensor's daily total. If you leave the entity empty, or it has no such attributes, the card uses the forecast linked to your solar panels in the Energy dashboard. The browser console (F12) shows one line saying which source it used, or why it found none.
 - **Power sign conventions**:
   - Grid power: positive = importing.
   - Battery power: positive = discharging. This is the Powerwall/pypowerwall convention.
@@ -101,3 +101,4 @@ export_rate: 0.15
 - **The running hour** is shown dashed. Its value comes from the live meter reading, so it updates as you watch.
 - **Battery estimate.** "Full ≈" and "reserve ≈" only appear when **Usable battery capacity** is set and the battery is actively charging or discharging. Estimates more than two days away show as "in 2+ days".
 - **Light themes** are supported; the card switches its night shading and icon colours automatically.
+- **Versions.** The version is shown in the card picker and in the browser console. In the GitHub repo, changing `CARD_VERSION` and pushing publishes a matching release automatically, which HACS then offers as an update.

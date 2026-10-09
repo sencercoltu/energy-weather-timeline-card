@@ -17,7 +17,13 @@
 /* [OLD 2026-10-09] Bumped for the solar forecast fix (see _solarForecast).
 const CARD_VERSION = "1.0.0";
 [/OLD] */
+/* [OLD 2026-10-09 v1.0.1->v1.0.2] Version bump for the generic forecast-attribute reader.
 const CARD_VERSION = "1.0.1";
+[/OLD] */
+/* [OLD 2026-10-09 v1.0.2->v1.0.3] Version bump for the energy-flow fallbacks and diagnostics.
+const CARD_VERSION = "1.0.2";
+[/OLD] */
+const CARD_VERSION = "1.0.3";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -218,6 +224,155 @@ const SW = {
   soc: `<svg width="12" height="10" viewBox="0 0 14 12" aria-hidden="true"><path d="M1,11V6Q4,2 7,4T13,2V11Z" style="fill:#4DD0A1;fill-opacity:.25;stroke:#4DD0A1;stroke-width:1.5"/></svg>`,
   cost: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.8" class="sw-cost"/></svg>`,
 };
+
+/* ------------------------------------------------------------------ */
+/* Solar forecast from entity attributes (added 2026-10-09, v1.0.2)    */
+/* Finds any time series in the attributes, whatever its layout:       */
+/*   [{period_start, pv_estimate}, …]  [[time, value], …]  {time: value} */
+/* and works out its unit (kWh, Wh, kW, W per interval) by comparing   */
+/* today's sum with the sensor's own daily total.                      */
+/* ------------------------------------------------------------------ */
+
+const FC_TIME_KEYS = ["period_start", "period_end", "start", "datetime", "date_time", "time", "timestamp", "period", "from", "begin", "date"];
+const FC_VALUE_KEYS = ["pv_estimate", "pv_estimate50", "estimate", "energy", "wh", "kwh", "value", "forecast", "power", "watts", "pv_power", "production"];
+const isTimeLike = (v) =>
+  (typeof v === "string" && /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(v)) || (typeof v === "number" && v > 1e9 && v < 1e13);
+const parseTime = (v) => (typeof v === "number" ? toMs(v) : Date.parse(String(v).replace(" ", "T")));
+
+function readForecastAttributes(attrs, ds, stateKwh) {
+  const cands = [];
+  for (const [name, val] of Object.entries(attrs)) {
+    let pts = null, vk = "", shift = 0;
+    if (Array.isArray(val) && val.length >= 3) {
+      const first = val.find((x) => x != null);
+      if (first && typeof first === "object" && !Array.isArray(first)) {
+        const keys = Object.keys(first);
+        const tk = FC_TIME_KEYS.find((k) => isTimeLike(first[k])) || keys.find((k) => isTimeLike(first[k]));
+        if (!tk) continue;
+        vk = FC_VALUE_KEYS.find((k) => typeof first[k] !== "boolean" && num(first[k]) !== null)
+          || keys.find((k) => k !== tk && typeof first[k] !== "boolean" && !isTimeLike(first[k]) && num(first[k]) !== null);
+        if (!vk) continue;
+        pts = val.map((x) => (x && typeof x === "object" ? [parseTime(x[tk]), num(x[vk])] : null));
+        if (tk === "period_end") shift = -1; // timestamps mark the end of each interval
+      } else if (Array.isArray(first) && first.length >= 2 && isTimeLike(first[0])) {
+        pts = val.map((x) => (Array.isArray(x) ? [parseTime(x[0]), num(x[1])] : null));
+      }
+    } else if (val && typeof val === "object" && !Array.isArray(val)) {
+      const ents = Object.entries(val);
+      if (ents.length >= 3 && ents.every(([k, v]) => isTimeLike(k) && num(v) !== null)) pts = ents.map(([k, v]) => [parseTime(k), num(v)]);
+    }
+    if (!pts) continue;
+    pts = pts.filter((p) => p && Number.isFinite(p[0]) && p[1] !== null).sort((a, b) => a[0] - b[0]);
+    if (pts.length >= 3) cands.push({ name, vk, pts, shift });
+  }
+
+  if (!cands.length) {
+    const sample = Object.entries(attrs)
+      .filter(([, v]) => v && typeof v === "object")
+      .map(([k, v]) => `${k}=${JSON.stringify(Array.isArray(v) ? v[0] : v).slice(0, 120)}`)
+      .slice(0, 3);
+    return { hours: null, note: `no time series found in attributes (${Object.keys(attrs).join(", ") || "none"})${sample.length ? `; sample: ${sample.join(" | ")}` : ""}` };
+  }
+
+  // Solcast-style per-site series (name_xxxx-xxxx-…) are summed unless a combined series exists
+  const siteRe = /[_-][0-9a-z]{4}(?:[-_][0-9a-z]{4}){2,}$/i;
+  const names = new Set(cands.map((x) => x.name));
+  const grouped = new Map();
+  for (const cd of cands) {
+    const base = cd.name.replace(siteRe, "");
+    if (base !== cd.name && names.has(base)) continue;
+    const g = grouped.get(base);
+    if (g && base !== cd.name) g.pts = g.pts.concat(cd.pts).sort((a, b) => a[0] - b[0]);
+    else grouped.set(base, { ...cd, name: base, pts: cd.pts.slice() });
+  }
+
+  const UNITS = [
+    ["kWh", (v) => v],
+    ["Wh", (v) => v / 1000],
+    ["kW", (v, h) => v * h],
+    ["W", (v, h) => (v * h) / 1000],
+  ];
+  const guessUnit = (cd) => {
+    const n = `${cd.name} ${cd.vk}`.toLowerCase();
+    if (/kwh/.test(n)) return "kWh";
+    if (/wh/.test(n)) return "Wh";
+    if (/watt|power|\bw\b/.test(n)) return "W";
+    const max = Math.max(...cd.pts.map((p) => p[1]));
+    return max > 50 ? "W" : "kW";
+  };
+
+  let best = null;
+  for (const cd of grouped.values()) {
+    const ts = [...new Set(cd.pts.map((p) => p[0]))];
+    const diffs = ts.slice(1).map((t, i) => (t - ts[i]) / HOUR).filter((d) => d > 0).sort((a, b) => a - b);
+    const step = diffs.length ? diffs[Math.floor(diffs.length / 2)] : 1;
+    const nameBonus = /hour|detailed|period|forecast/i.test(cd.name) ? 0.01 : 0;
+    for (const [unit, conv] of UNITS) {
+      const out = Array(24).fill(0);
+      let any = false, tomorrow = 0, today = 0;
+      for (const [t0, v] of cd.pts) {
+        const t = t0 + cd.shift * step * HOUR;
+        const i = Math.floor((t - ds) / HOUR), kwh = conv(v, step);
+        if (i >= 0 && i < 24) { out[i] += kwh; today += kwh; any = true; }
+        else if (i >= 24 && i < 48) tomorrow += kwh;
+      }
+      if (!any) continue;
+      const score = stateKwh > 0
+        ? (today > 0 ? Math.abs(Math.log(today / stateKwh)) : 99) - nameBonus
+        : (unit === guessUnit(cd) ? 0 : 1) - nameBonus;
+      if (!best || score < best.score)
+        best = { score, hours: out, tomorrow: tomorrow || null, label: `${cd.name}${cd.vk ? `.${cd.vk}` : ""} (${unit} per ${r1(step * 60)} min)` };
+    }
+  }
+  if (!best) return { hours: null, note: `time series found (${[...grouped.keys()].join(", ")}) but none has entries for today` };
+  return best;
+}
+
+/* ------------------------------------------------------------------ */
+/* Energy fallbacks (added 2026-10-09, v1.0.3)                         */
+/* ------------------------------------------------------------------ */
+
+// Hourly change of a cumulative meter from its raw recorder history (handles meter resets)
+function cumulativeHours(series, live, ds, now, nh) {
+  const pts = series.slice();
+  if (live !== null && live !== undefined) pts.push([now, live]);
+  const valAt = (t) => {
+    let v = pts.length ? pts[0][1] : null;
+    for (const [ts, x] of pts) { if (ts <= t) v = x; else break; }
+    return v;
+  };
+  const arr = Array(24).fill(null);
+  for (let h = 0; h <= nh; h++) {
+    const a = valAt(ds + h * HOUR), b = valAt(Math.min(now, ds + (h + 1) * HOUR));
+    arr[h] = a === null || b === null ? 0 : b >= a ? b - a : Math.max(0, b);
+  }
+  return arr;
+}
+
+// Hourly kWh from a power sensor's history (kW, signed). sign picks the direction to count:
+// +1 counts positive power (import, production, use), -1 counts negative power (export).
+function integratePower(series, live, sign, ds, now, nh) {
+  const pts = series.slice();
+  if (live && live[1] !== null && Number.isFinite(live[0])) {
+    const lastT = pts.length ? pts[pts.length - 1][0] : ds;
+    pts.push([Math.max(lastT, Math.min(now, live[0])), live[1]]);
+  }
+  const arr = Array(24).fill(null);
+  for (let h = 0; h <= nh; h++) arr[h] = 0;
+  for (let i = 0; i < pts.length; i++) {
+    let t0 = Math.max(ds, pts[i][0]);
+    const t1 = Math.min(now, i + 1 < pts.length ? pts[i + 1][0] : now);
+    const kw = Math.max(0, pts[i][1] * sign);
+    if (!(kw > 0) || t1 <= t0) continue;
+    while (t0 < t1) {
+      const h = Math.floor((t0 - ds) / HOUR);
+      const end = Math.min(t1, ds + (h + 1) * HOUR);
+      if (h >= 0 && h < 24) arr[h] += (kw * (end - t0)) / HOUR;
+      t0 = end;
+    }
+  }
+  return arr;
+}
 
 /* ------------------------------------------------------------------ */
 /* Timeline chart (pure function: model -> SVG string)                 */
@@ -629,6 +784,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     this._width = 0;
     this._lastMinute = null;
     this._fmtCache = new Map();
+    this._series = {};   // added 2026-10-09 v1.0.3: raw recorder history for energy/power fallbacks
+    this._flowDiag = {}; // added 2026-10-09 v1.0.3: last console diagnosis per energy flow
   }
 
   /* ---------- editor ---------- */
@@ -888,6 +1045,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const errors = [];
     const jobs = [];
 
+    /* [OLD 2026-10-09 v1.0.2->v1.0.3] Replaced: a sensor without long-term statistics (no state_class) silently gave
+       all-zero hours, and there was no fallback to recorder history or to a power sensor.
     // hourly energy (and rain) from long-term statistics
     const statIds = [c.solar_energy_entity, c.home_energy_entity, c.grid_import_entity, c.grid_export_entity, c.rain_entity].filter(Boolean);
     if (statIds.length) {
@@ -924,6 +1083,76 @@ class EnergyWeatherTimelineCard extends HTMLElement {
           .catch((e) => errors.push(`statistics (${e.message || e.code || e})`))
       );
     }
+    [/OLD] */
+
+    // energy flows: long-term statistics first; recorder history for sensors without statistics;
+    // power history (integrated) when there is no energy sensor or it showed no change today
+    const flows = this._flowDefs();
+    const statIds = [...new Set(flows.map((f) => f.energy).filter(Boolean))];
+    jobs.push((async () => {
+      const stats = {}, base = {};
+      if (statIds.length) {
+        const req = (period, start) =>
+          hass.callWS({
+            type: "recorder/statistics_during_period",
+            start_time: iso(start), end_time: iso(now), statistic_ids: statIds, period,
+            types: ["change", "state"], units: { energy: "kWh", distance: "mm" },
+          });
+        try {
+          const [hourly, five] = await Promise.all([req("hour", ds), req("5minute", hs)]);
+          for (const id of statIds) {
+            const rows = (hourly && hourly[id]) || [];
+            const fl = (five && five[id]) || [];
+            if (!rows.length && !fl.length) continue; // no long-term statistics for this sensor
+            const arr = Array(24).fill(null);
+            for (let i = 0; i < nh; i++) arr[i] = 0;
+            let b = null;
+            for (const p of rows) {
+              const st = toMs(p.start), i = Math.floor((st - ds) / HOUR + 1e-6);
+              if (i >= 0 && i < nh) arr[i] = Math.max(0, num(p.change) ?? 0);
+              const e = p.end != null ? toMs(p.end) : st + HOUR;
+              if (Math.abs(e - hs) < 1000 && num(p.state) !== null) b = { state: num(p.state), change: 0 };
+            }
+            if (!b && fl.length)
+              b = { change: fl.reduce((a, p) => a + Math.max(0, num(p.change) ?? 0), 0), state: num(fl[fl.length - 1].state) };
+            stats[id] = arr;
+            base[id] = b || { change: 0, state: null };
+          }
+        } catch (e) {
+          errors.push(`statistics (${e.message || e.code || e})`);
+        }
+      }
+      const histIds = new Set();
+      for (const f of flows) {
+        if (f.energy && !stats[f.energy]) histIds.add(f.energy);
+        const today = f.energy && stats[f.energy] ? sum(stats[f.energy]) + (base[f.energy]?.change || 0) : null;
+        if (f.power && (today === null || today < 0.01)) histIds.add(f.power);
+      }
+      const series = {};
+      if (histIds.size) {
+        const powerIds = new Set(flows.map((f) => f.power).filter(Boolean));
+        try {
+          const r = await hass.callWS({
+            type: "history/history_during_period", start_time: iso(ds), end_time: iso(now),
+            entity_ids: [...histIds], minimal_response: true, no_attributes: true, significant_changes_only: false,
+          });
+          for (const id of histIds) {
+            const unit = hass.states[id]?.attributes?.unit_of_measurement;
+            const k = powerIds.has(id) ? POWER_F[unit] ?? 0.001 : id === c.rain_entity ? LENGTH_F[unit] ?? 1 : ENERGY_F[unit] ?? 1;
+            series[id] = ((r && r[id]) || [])
+              .map((e) => [Math.max(ds, toMs(e.lu ?? e.lc)), num(e.s)])
+              .filter((x) => x[1] !== null && Number.isFinite(x[0]))
+              .map(([t, v]) => [t, v * k]);
+          }
+        } catch (e) {
+          errors.push(`energy history (${e.message || e.code || e})`);
+        }
+      }
+      this._stats = stats;
+      this._base = base;
+      this._series = series;
+      this._statsDay = ds;
+    })());
 
     // battery SOC and import price history
     const histIds = [c.battery_soc_entity, c.import_rate_entity].filter(Boolean);
@@ -992,6 +1221,19 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     this._scheduleRender();
   }
 
+  // added 2026-10-09 v1.0.3: where each energy flow can come from
+  _flowDefs() {
+    const c = this._config;
+    const inv = !!c.grid_power_invert;
+    return [
+      { key: "solar", label: "Solar", energy: c.solar_energy_entity, power: c.solar_power_entity, sign: 1, conv: energyKWh },
+      { key: "home", label: "Home", energy: c.home_energy_entity, power: c.home_power_entity, sign: 1, conv: energyKWh },
+      { key: "imp", label: "Grid import", energy: c.grid_import_entity, power: c.grid_power_entity, sign: inv ? -1 : 1, conv: energyKWh },
+      { key: "exp", label: "Grid export", energy: c.grid_export_entity, power: c.grid_power_entity, sign: inv ? 1 : -1, conv: energyKWh },
+      { key: "rain", label: "Rain", energy: c.rain_entity, power: null, sign: 1, conv: lengthMm },
+    ];
+  }
+
   /* [OLD 2026-10-09] Replaced: read only detailedHourly / detailedForecast / wh_hours from the chosen entity,
      missed Solcast per-site attributes and Open-Meteo's wh_period, and never fell back to the Energy
      dashboard forecast when the entity had no hourly data, so "today" stayed empty.
@@ -1022,6 +1264,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     return { hours: any ? out : null, tomorrow };
   }
   [/OLD] */
+  /* [OLD 2026-10-09 v1.0.1->v1.0.2] Replaced: only recognised a few fixed attribute layouts (detailedHourly, detailedForecast,
+     per-site detailed*, wh_hours, wh_period), so forecasts stored in any other attribute shape were ignored.
   _solarForecast(ds) {
     const c = this._config, hass = this._hass;
     const out = Array(24).fill(0);
@@ -1079,6 +1323,44 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       (any ? console.info : console.warn)(`${CARD_TAG}: ${diag}`);
     }
     return { hours: any ? out : null, tomorrow, total: any ? null : total };
+  }
+  [/OLD] */
+  _solarForecast(ds) {
+    const c = this._config, hass = this._hass;
+    let hours = null, tomorrow = null, total = null, source = null;
+    const notes = [];
+
+    const e = c.solar_forecast_entity && hass.states[c.solar_forecast_entity];
+    if (c.solar_forecast_entity && !e) notes.push(`${c.solar_forecast_entity} not found`);
+    if (e) {
+      const r = readForecastAttributes(e.attributes || {}, ds, energyKWh(e));
+      if (r.hours) { hours = r.hours; tomorrow = r.tomorrow; source = `${c.solar_forecast_entity} → ${r.label}`; }
+      else { notes.push(`${c.solar_forecast_entity}: ${r.note}`); total = energyKWh(e); }
+    }
+    if (!hours) {
+      if (this._solarFcWs && typeof this._solarFcWs === "object") {
+        const entries = Object.values(this._solarFcWs).filter((x) => x && x.wh_hours);
+        const out = Array(24).fill(0);
+        let any = false, tmr = null;
+        for (const x of entries) for (const [k, v] of Object.entries(x.wh_hours)) {
+          const i = Math.floor((toMs(k) - ds) / HOUR), kwh = (num(v) ?? 0) / 1000;
+          if (i >= 0 && i < 24) { out[i] += kwh; any = true; } else if (i >= 24 && i < 48) tmr = (tmr || 0) + kwh;
+        }
+        if (any) { hours = out; tomorrow = tmr; source = "Energy dashboard"; }
+        else notes.push(entries.length ? "Energy dashboard forecast has no data for today" : "no forecast is linked to your solar panels in the Energy dashboard");
+      } else if (this._solarFcWsError) notes.push(`Energy dashboard forecast failed: ${this._solarFcWsError}`);
+    }
+    const tEnt = c.solar_forecast_tomorrow_entity && hass.states[c.solar_forecast_tomorrow_entity];
+    if (tEnt) { const v = energyKWh(tEnt); if (v !== null) tomorrow = v; }
+
+    // one console line whenever the outcome changes
+    const diag = hours ? `today's forecast from ${source}` : `no hourly solar forecast for today — ${notes.join("; ")}`;
+    if (diag !== this._fcDiag) {
+      this._fcDiag = diag;
+      (hours ? console.info : console.warn)(`${CARD_TAG} v${CARD_VERSION}: ${diag}`);
+    }
+    this._fcNote = hours ? null : notes[0] || null;
+    return { hours, tomorrow, total: hours ? null : total };
   }
 
   /* ---------- formatting ---------- */
@@ -1160,6 +1442,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const nowH = Math.min(23.999, (now - ds) / HOUR), nh = Math.floor(nowH), frac = nowH - nh;
     const S = (id) => (id ? hass.states[id] : undefined);
     const statsReady = this._statsDay === ds;
+    /* [OLD 2026-10-09 v1.0.2->v1.0.3] Replaced by flowOf below: only used long-term statistics, no fallbacks, no diagnosis.
     const hoursOf = (id, conv) => {
       if (!id || !statsReady || !this._stats[id]) return null;
       const arr = this._stats[id].slice();
@@ -1169,6 +1452,51 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       if (b.state != null && live != null && live >= b.state) part += live - b.state;
       arr[nh] = part;
       return arr;
+    };
+    [/OLD] */
+    const flowNotes = [];
+    const flowOf = (key) => {
+      const f = this._flowDefs().find((x) => x.key === key);
+      if (!f || (!f.energy && !f.power) || !statsReady) return null;
+      let arr = null, src = "", why = "";
+      const est = f.energy ? S(f.energy) : null;
+      if (f.energy && !est) why = `${f.energy} not found`;
+      if (f.energy && this._stats[f.energy]) {
+        arr = this._stats[f.energy].slice();
+        const b = this._base[f.energy] || { change: 0, state: null };
+        const live = f.conv(est);
+        let part = b.change || 0;
+        if (b.state != null && live != null && live >= b.state) part += live - b.state;
+        arr[nh] = part;
+        src = `statistics of ${f.energy}`;
+      } else if (f.energy && this._series[f.energy]?.length) {
+        arr = cumulativeHours(this._series[f.energy], f.conv(est), ds, now, nh);
+        const sc = est?.attributes?.state_class;
+        src = `recorder history of ${f.energy} (it has no long-term statistics; state_class is ${sc ? `"${sc}"` : "not set"})`;
+      } else if (f.energy && est) {
+        why = `${f.energy} has no statistics and no history for today`;
+      }
+      if (f.power && this._series[f.power]?.length && (!arr || sum(arr) < 0.01)) {
+        const pst = S(f.power);
+        const live = pst ? [Math.max(toMs(pst.last_updated) || now, 0), powerKW(pst)] : null;
+        const p = integratePower(this._series[f.power], live, f.sign, ds, now, nh);
+        if (!arr || sum(p) > 0.05) {
+          if (arr) why = `${f.energy} shows no change today`;
+          src = `${f.power}, integrated over time${why ? ` (${why})` : ""}`;
+          arr = p;
+        }
+      }
+      const diag = arr ? `${f.label} from ${src}` : `${f.label}: no data${why ? ` — ${why}` : ""}`;
+      if (this._flowDiag[key] !== diag) {
+        this._flowDiag[key] = diag;
+        (arr ? console.info : console.warn)(`${CARD_TAG} v${CARD_VERSION}: ${diag}`);
+      }
+      if (!arr) flowNotes.push(f.label);
+      return arr;
+    };
+    const hoursOf = (id) => {
+      const f = this._flowDefs().find((x) => x.energy === id);
+      return f ? flowOf(f.key) : null;
     };
 
     const m = {
@@ -1200,10 +1528,17 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const isNight = (h) => m.sunrise != null && (h < m.sunrise || h > m.sunset);
 
     // energy
+    /* [OLD 2026-10-09 v1.0.2->v1.0.3] Flows now resolve through flowOf (statistics → history → power).
     m.solar = hoursOf(c.solar_energy_entity, energyKWh);
     m.home = hoursOf(c.home_energy_entity, energyKWh);
     m.imp = hoursOf(c.grid_import_entity, energyKWh);
     m.exp = hoursOf(c.grid_export_entity, energyKWh);
+    [/OLD] */
+    m.solar = flowOf("solar");
+    m.home = flowOf("home");
+    m.imp = flowOf("imp");
+    m.exp = flowOf("exp");
+    m.flowNotes = flowNotes;
     const sf = this._solarForecast(ds);
     m.solarFc = sf.hours;
     m.tomorrow = sf.tomorrow;
@@ -1414,6 +1749,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     if (anyData) out.push(`<div class="chart">${chartSvg(W, m).svg}</div>`);
     else if (!this._entityIds().length) out.push(`<div class="note">Open the card editor to choose your weather and energy entities.</div>`);
 
+    if (m.flowNotes && m.flowNotes.length)
+      out.push(`<div class="note">No data today for ${esc(m.flowNotes.join(", "))} — the browser console (F12) says why.</div>`); // added 2026-10-09 v1.0.3
     if (this._error) out.push(`<div class="note err">${esc(this._error)}</div>`);
     else if (this._fetching && this._statsDay === null && this._entityIds().length) out.push(`<div class="note">Loading today's history…</div>`);
 
@@ -1503,7 +1840,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     [/OLD] */
     if (m.solarFc || m.tomorrow != null || m.fcTotalOnly != null) {
       const value = m.solarFc ? this._kwh(m.fcToday) : m.fcTotalOnly != null ? this._kwh(m.fcTotalOnly) : "—";
+      /* [OLD 2026-10-09 v1.0.1->v1.0.2] Gave no hint why hourly data was missing.
       const s1 = m.solarFc ? `${m.fcLeft.toFixed(1)} kWh still to come` : m.fcTotalOnly != null ? "No hourly data" : "No forecast for today";
+      [/OLD] */
+      const s1 = m.solarFc ? `${m.fcLeft.toFixed(1)} kWh still to come` : m.fcTotalOnly != null ? "No hourly data — see browser console" : "No forecast for today";
       t.push(this._tile(SW.fc, "Solar forecast", value, s1,
         m.tomorrow != null ? `Tomorrow ${m.tomorrow.toFixed(1)} kWh` : ""));
     }
@@ -1556,7 +1896,10 @@ if (!window.customCards.some((c) => c.type === CARD_TAG)) {
   window.customCards.push({
     type: CARD_TAG,
     name: "Energy & Weather Timeline",
+    /* [OLD 2026-10-09 v1.0.1->v1.0.2] Description had no version.
     description: "Clock, hourly weather and today's solar, home, grid and battery on one 24-hour timeline.",
+    [/OLD] */
+    description: `Clock, hourly weather and today's solar, home, grid and battery on one 24-hour timeline. v${CARD_VERSION}`,
     preview: true,
   });
 }

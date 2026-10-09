@@ -30,7 +30,10 @@ const CARD_VERSION = "1.0.3";
 /* [OLD 2026-10-09 v1.0.4->v1.1.0] Version bump for the sliding timeline, export tariff, storm alert and battery time left.
 const CARD_VERSION = "1.0.4";
 [/OLD] */
+/* [OLD 2026-10-09 v1.1.0->v1.2.0] Version bump for the export price entity.
 const CARD_VERSION = "1.1.0";
+[/OLD] */
+const CARD_VERSION = "1.2.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -344,6 +347,58 @@ function readForecastAttributes(attrs, ds, stateKwh) {
   }
   if (!best) return { hours: null, note: `time series found (${[...grouped.keys()].join(", ")}) but none has entries for today` };
   return best;
+}
+
+/* ------------------------------------------------------------------ */
+/* Price entities (added 2026-10-09, v1.2.0)                           */
+/* A price entity can carry its rates as a schedule in its attributes  */
+/* (Octopus Energy day-rates events: rates[{start, end, value_inc_vat}]; */
+/* Nord Pool: raw_today / raw_tomorrow [{start, end, value}]), and a   */
+/* numeric state whose recorder history gives the past rates.          */
+/* ------------------------------------------------------------------ */
+
+// a plain number only: "0.15" yes, "2026-10-09T16:00:00" no (parseFloat would give 2026)
+const strictNum = (v) => {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  return /^\s*-?\d+(\.\d+)?(e-?\d+)?\s*$/i.test(String(v ?? "")) ? parseFloat(v) : null;
+};
+// unit_of_measurement → factor to currency per kWh (pence/cents per kWh → 0.01, per MWh → 0.001)
+const rateFactor = (unit) => {
+  const u = String(unit || "");
+  let f = /^(p|c|ct|¢|cents?|pence)\s*\//i.test(u) || /^GBp\b/.test(u) ? 0.01 : 1;
+  if (/mwh/i.test(u)) f /= 1000;
+  return f;
+};
+const RATE_TIME_KEYS = ["start", "from", "valid_from", "period_start", "start_time", "datetime", "time", "begin"];
+const RATE_END_KEYS = ["end", "to", "valid_to", "period_end", "end_time", "until"];
+const RATE_VALUE_KEYS = ["value_inc_vat", "rate_inc_vat", "price_inc_vat", "value", "price", "rate", "unit_rate", "export_rate", "import_rate", "total", "value_exc_vat"];
+function readRateSchedule(attrs) {
+  const rows = [], names = [];
+  for (const [name, val] of Object.entries(attrs || {})) {
+    if (!Array.isArray(val) || !val.length) continue;
+    const first = val.find((x) => x && typeof x === "object" && !Array.isArray(x));
+    if (!first) continue;
+    const tk = RATE_TIME_KEYS.find((k) => isTimeLike(first[k]));
+    const vk = RATE_VALUE_KEYS.find((k) => typeof first[k] !== "boolean" && !isTimeLike(first[k]) && num(first[k]) !== null);
+    if (!tk || !vk) continue;
+    const ek = RATE_END_KEYS.find((k) => isTimeLike(first[k]));
+    const got = val
+      .filter((x) => x && typeof x === "object")
+      .map((x) => ({ t0: parseTime(x[tk]), t1: ek ? parseTime(x[ek]) : NaN, v: num(x[vk]) }))
+      .filter((r) => Number.isFinite(r.t0) && r.v !== null);
+    if (!got.length) continue;
+    rows.push(...got);
+    names.push(`${name}.${vk}`);
+  }
+  rows.sort((a, b) => a.t0 - b.t0);
+  const out = [];
+  for (const r of rows) if (!out.length || out[out.length - 1].t0 !== r.t0) out.push({ ...r });
+  const steps = out.slice(1).map((r, i) => r.t0 - out[i].t0).filter((d) => d > 0).sort((a, b) => a - b);
+  const step = steps.length ? steps[Math.floor(steps.length / 2)] : HOUR;
+  out.forEach((r, i) => {
+    if (!Number.isFinite(r.t1) || r.t1 <= r.t0) r.t1 = i + 1 < out.length ? Math.min(out[i + 1].t0, r.t0 + step) : r.t0 + step;
+  });
+  return { entries: out, names };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1023,6 +1078,7 @@ const LABELS = {
   timeline_hours: "Timeline length", // added 2026-10-09 v1.1.0
   export_tariff: "Export tariff periods (optional)", // added 2026-10-09 v1.1.0
   show_storm_alert: "Storm alert", // added 2026-10-09 v1.1.0
+  export_rate_entity: "Export price entity (optional)", // added 2026-10-09 v1.2.0
 };
 const HELPERS = {
   rain_entity: "A total/total_increasing precipitation sensor. Fills the rain lane for past hours; forecast hours always come from the weather entity.",
@@ -1045,6 +1101,7 @@ const HELPERS = {
   export_tariff: "Same format as the import tariff periods, with your export rates. Example:\n- start: '16:00'\n  end: '19:00'\n  rate: 0.29\n  type: peak\nHours not listed use the standard export rate. Shown as a second band and used for today's income.", // added 2026-10-09 v1.1.0
   timeline_hours: "How many hours the timeline shows, with now always in the centre. Joins yesterday, today and tomorrow.", // added 2026-10-09 v1.1.0
   show_storm_alert: "A red label when the hourly forecast has thunder, hail, exceptional weather or storm-force wind in the next 24 hours.", // added 2026-10-09 v1.1.0
+  export_rate_entity: "Your export price as an entity. Takes priority over the export tariff periods. Past hours come from its recorded history; upcoming hours from a rate list in its attributes, if it has one (Octopus Energy's export day-rates event, Nord Pool's raw_today/raw_tomorrow). Units such as GBP/kWh or p/kWh are converted.", // added 2026-10-09 v1.2.0
 };
 
 const ENERGY_SENSOR = { entity: { filter: { domain: "sensor", device_class: "energy" } } };
@@ -1150,6 +1207,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
             },
             { name: "export_tariff", selector: { object: {} } }, // added 2026-10-09 v1.1.0
             { name: "import_rate_entity", selector: { entity: { filter: { domain: "sensor" } } } },
+            { name: "export_rate_entity", selector: { entity: { filter: [{ domain: "sensor" }, { domain: "event" }, { domain: "number" }, { domain: "input_number" }] } } }, // added 2026-10-09 v1.2.0
             { name: "currency", selector: { text: {} } },
           ],
         },
@@ -1296,7 +1354,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       "weather_entity", "rain_entity", "warning_entity", "solar_energy_entity", "solar_power_entity",
       "solar_forecast_entity", "solar_forecast_tomorrow_entity", "home_energy_entity", "home_power_entity",
       "grid_import_entity", "grid_export_entity", "grid_power_entity", "battery_soc_entity",
+      /* [OLD 2026-10-09 v1.1.0->v1.2.0] No export price entity.
       "battery_power_entity", "battery_reserve_entity", "import_rate_entity",
+      [/OLD] */
+      "battery_power_entity", "battery_reserve_entity", "import_rate_entity", "export_rate_entity",
     ].map((k) => c[k]).filter(Boolean);
   }
   _entitiesChanged(a, b) {
@@ -1498,7 +1559,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     })());
 
     // battery SOC and import price history
+    /* [OLD 2026-10-09 v1.1.0->v1.2.0] No export price entity.
     const histIds = [c.battery_soc_entity, c.import_rate_entity].filter(Boolean);
+    [/OLD] */
+    const histIds = [c.battery_soc_entity, c.import_rate_entity, c.export_rate_entity].filter(Boolean);
     if (histIds.length) {
       jobs.push(
         hass.callWS({
@@ -2214,6 +2278,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       nowLabel: `Now ${this._fmtHM(now)}`,
       rateLabel: (s) => {
         const r = this._rateText(s.rate);
+        if (s.plain) return r; // added 2026-10-09 v1.2.0: price-entity segments show the price only
         if (s.label) return r ? `${r} ${s.label}` : s.label;
         if (s.type === "off_peak") return r ? `${r} off-peak` : "off-peak";
         if (s.type === "peak") return r ? `${r} peak` : "peak";
@@ -2417,8 +2482,29 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     } else if (stdRate !== null) {
       m.rateAt = () => stdRate;
     }
+    /* [OLD 2026-10-09 v1.1.0->v1.2.0] Export rate came only from the export tariff periods or the flat rate.
     const expRate = num(c.export_rate);
     if (this._expTariff.length) {
+      const segs = tariffSegments(this._expTariff, expRate);
+      if (c.show_tariff !== false) m.expTariff = spread(segs);
+      m.expRateAt = (k) => { const h = clockOf(k), s = segs.find((x) => h >= x.a && h < x.b); return s && s.rate != null ? s.rate : expRate; };
+    } else if (expRate !== null) {
+      m.expRateAt = () => expRate;
+    }
+    [/OLD] */
+    // v1.2.0: an export price entity wins over the export tariff periods, which win over the flat rate
+    const expRate = num(c.export_rate);
+    if (c.export_rate_entity) {
+      const src = this._rateSource(c.export_rate_entity, ds, now);
+      const at = (k) => src.at(ds + k * HOUR);
+      // an hour's rate is the mean of its two half hours, so half-hourly prices are priced right
+      m.expRateAt = (k) => {
+        const a = at(k - 0.25), b = at(k + 0.25);
+        const v = a !== null && b !== null ? (a + b) / 2 : a !== null ? a : b;
+        return v !== null ? v : expRate;
+      };
+      if (c.show_tariff !== false) m.expTariff = this._rateBand(at, wStart, wEnd);
+    } else if (this._expTariff.length) {
       const segs = tariffSegments(this._expTariff, expRate);
       if (c.show_tariff !== false) m.expTariff = spread(segs);
       m.expRateAt = (k) => { const h = clockOf(k), s = segs.find((x) => h >= x.a && h < x.b); return s && s.rate != null ? s.rate : expRate; };
@@ -2451,6 +2537,82 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       m.selfPowered = Math.max(0, 1 - fromGrid / m.homeToday);
     }
     return m;
+  }
+
+  // added 2026-10-09 v1.2.0: a price entity as a rate source. at(ms) gives currency per kWh, or null when unknown:
+  // the schedule in its attributes first, then its recorded history (past), then its live state (now, and
+  // up to the end of the current rate period when the entity says when that is). One console line per outcome.
+  _rateSource(id, ds, now) {
+    const st = this._hass.states[id];
+    if (!st) {
+      this._rateDiagLog(id, `${id} not found`, true);
+      return { at: () => null };
+    }
+    const a = st.attributes || {};
+    const f = rateFactor(a.unit_of_measurement);
+    const live = strictNum(st.state);
+    const liveV = live !== null ? live * f : null;
+    const sched = readRateSchedule(a);
+    let sf = f;
+    if (sched.entries.length) {
+      const cur = sched.entries.find((e) => e.t0 <= now && now < e.t1);
+      if (cur && liveV && cur.v > 0) {
+        // the scale that makes the schedule agree with the live price (pounds vs pence, per kWh vs per MWh)
+        let best = null;
+        for (const c of [f, 1, 0.01, 0.001, 0.00001]) {
+          const d = Math.abs(Math.log((cur.v * c) / liveV));
+          if (best === null || d < best.d) best = { c, d };
+        }
+        sf = best.c;
+      } else if (!a.unit_of_measurement) {
+        const vals = sched.entries.map((e) => e.v).sort((x, y) => x - y);
+        sf = vals[Math.floor(vals.length / 2)] > 2 ? 0.01 : 1; // e.g. 15.3 is pence, 0.153 is pounds
+      }
+    }
+    const raw = live !== null && this._histDay === ds ? (this._hist[id] || []).filter((p) => Number.isFinite(p[1])) : [];
+    const liveEnd = toMs(a.end ?? a.valid_to ?? a.end_time ?? a.until);
+    const hourEnd = Math.floor(now / HOUR) * HOUR + HOUR;
+    const at = (t) => {
+      for (const e of sched.entries) { if (e.t0 <= t && t < e.t1) return e.v * sf; if (e.t0 > t) break; }
+      if (t <= now) {
+        let r = null;
+        for (const [ts, v] of raw) { if (ts <= t) r = v; else break; }
+        if (r !== null) return r * f;
+      }
+      if (liveV !== null && t >= now - HOUR && t < (Number.isFinite(liveEnd) && liveEnd > now ? liveEnd : hourEnd)) return liveV;
+      return null;
+    };
+    const parts = [];
+    if (sched.entries.length) parts.push(`rate list in ${sched.names.join(" + ")} (${sched.entries.length} entries, ×${sf} to ${this._currency()}/kWh)`);
+    if (raw.length) parts.push(`recorded history (${raw.length} values)`);
+    if (liveV !== null) parts.push(`live state ${st.state} ${a.unit_of_measurement || ""}`.trim());
+    this._rateDiagLog(id, parts.length ? `export price from ${id}: ${parts.join(", ")}${sched.entries.length ? "" : "; no rate list in its attributes, so hours after the current one are blank"}` : `${id} has no usable price (state "${st.state}", no rate list in its attributes)`, !parts.length);
+    return { at };
+  }
+  _rateDiagLog(id, msg, warn) {
+    this._rateDiag = this._rateDiag || {};
+    if (this._rateDiag[id] === msg) return;
+    this._rateDiag[id] = msg;
+    (warn ? console.warn : console.info)(`${CARD_TAG} v${CARD_VERSION}: ${msg}`);
+  }
+  // added 2026-10-09 v1.2.0: band segments from a rate function (half-hour steps), coloured by level within the view
+  _rateBand(at, wStart, wEnd) {
+    const segs = [];
+    for (let h = Math.floor(wStart * 2) / 2; h < wEnd; h += 0.5) {
+      const v = at(h + 0.25);
+      if (v === null) continue;
+      const prev = segs[segs.length - 1];
+      if (prev && Math.abs(prev.b - h) < 0.01 && Math.abs(prev.rate - v) < 1e-6) prev.b = h + 0.5;
+      else segs.push({ a: h, b: h + 0.5, rate: v, plain: true, label: null });
+    }
+    if (!segs.length) return null;
+    // time-weighted median: the rate in force for most of the view counts as standard
+    const byRate = segs.map((x) => [x.rate, x.b - x.a]).sort((x, y) => x[0] - y[0]);
+    const total = byRate.reduce((t, x) => t + x[1], 0);
+    let acc = 0, mid = byRate[0][0];
+    for (const [r, d] of byRate) { acc += d; if (acc >= total / 2) { mid = r; break; } }
+    for (const x of segs) x.type = mid > 0 && x.rate >= mid * 1.15 ? "peak" : mid > 0 && x.rate <= mid * 0.85 ? "off_peak" : "standard";
+    return segs;
   }
 
   // added 2026-10-09 v1.1.0: storms in the next STORM_AHEAD_H hours of the hourly forecast (and right now)

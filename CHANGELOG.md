@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.3.0
+- Fits the sections grid: a default size of 12 columns × 12 rows (minimum 6 × 7), and the card fills whatever rows and columns it is given. The graph grows or shrinks to fit; when space is tight, the humidity row, rain lane, tariff bands, tiles and weather icons are left out, in that order.
+- The blue Now label sits on the time axis under the graph instead of at the top.
+- Energy totals of 1000 kWh and above show as MWh with two decimals.
+
 ## v1.2.0
 - Export price entity (optional): the export rate can come from its own entity instead of fixed periods. Past hours use its recorded history; upcoming hours use a rate list in its attributes when it has one (Octopus Energy day-rates events, Nord Pool raw_today / raw_tomorrow). Half-hourly prices are averaged per hour for today's income, and the Sell band shows them at half-hour resolution, coloured by how they compare with the usual rate in view. GBP/kWh, p/kWh and per-MWh units are converted. One console line says what was used.
 

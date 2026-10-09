@@ -23,7 +23,10 @@ const CARD_VERSION = "1.0.1";
 /* [OLD 2026-10-09 v1.0.2->v1.0.3] Version bump for the energy-flow fallbacks and diagnostics.
 const CARD_VERSION = "1.0.2";
 [/OLD] */
+/* [OLD 2026-10-09 v1.0.3->v1.0.4] Version bump to publish the first GitHub release with the release workflow.
 const CARD_VERSION = "1.0.3";
+[/OLD] */
+const CARD_VERSION = "1.0.4";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 

@@ -14,7 +14,10 @@
  * uses Home Assistant's built-in form editor (static getConfigForm).
  */
 
+/* [OLD 2026-10-09] Bumped for the solar forecast fix (see _solarForecast).
 const CARD_VERSION = "1.0.0";
+[/OLD] */
+const CARD_VERSION = "1.0.1";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -581,7 +584,10 @@ const HELPERS = {
   warning_entity: "Any entity that turns on (or holds warnings) when a warning is active, e.g. a MeteoAlarm binary sensor.",
   time_zone: "Leave empty to follow your Home Assistant profile setting. Example: Europe/London.",
   solar_energy_entity: "Energy sensors need state_class total or total_increasing so Home Assistant keeps hourly statistics.",
+  /* [OLD 2026-10-09] Helper text did not warn that Forecast.Solar's sensors carry no hourly data.
   solar_forecast_entity: "Leave empty to use the solar forecast configured in the Energy dashboard (Forecast.Solar, Open-Meteo Solar). For Solcast, pick the 'forecast today' sensor.",
+  [/OLD] */
+  solar_forecast_entity: "Best left empty: the card then uses the forecast linked to your solar panels in the Energy dashboard. Only pick an entity that carries hourly data in its attributes, such as Solcast's 'forecast today' with detailed attributes enabled. Forecast.Solar's 'energy production today' has no hourly data.",
   solar_forecast_tomorrow_entity: "A sensor with tomorrow's expected production in kWh.",
   grid_power_entity: "Positive while importing, negative while exporting. Use the toggle below if yours is the other way round.",
   battery_power_entity: "Positive while discharging, negative while charging (Powerwall convention). Use the toggle below if yours is the other way round.",
@@ -958,6 +964,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       );
     }
 
+    /* [OLD 2026-10-09] Only fetched the Energy dashboard forecast when no forecast entity was set,
+       so an entity without hourly attributes left today's forecast empty, and errors were swallowed.
     // solar forecast from the Energy dashboard (refreshed every 30 min)
     if (!c.solar_forecast_entity && now - this._lastSolarFetch > 30 * 60000) {
       this._lastSolarFetch = now;
@@ -967,6 +975,16 @@ class EnergyWeatherTimelineCard extends HTMLElement {
           .catch(() => { this._solarFcWs = null; })
       );
     }
+    [/OLD] */
+    // solar forecast from the Energy dashboard (refreshed every 30 min); also the fallback for an entity without hourly data
+    if (now - this._lastSolarFetch > 30 * 60000) {
+      this._lastSolarFetch = now;
+      jobs.push(
+        hass.callWS({ type: "energy/solar_forecast" })
+          .then((r) => { this._solarFcWs = r; this._solarFcWsError = null; })
+          .catch((e) => { this._solarFcWs = null; this._solarFcWsError = e?.message || e?.code || String(e); })
+      );
+    }
 
     await Promise.all(jobs);
     this._fetching = false;
@@ -974,6 +992,9 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     this._scheduleRender();
   }
 
+  /* [OLD 2026-10-09] Replaced: read only detailedHourly / detailedForecast / wh_hours from the chosen entity,
+     missed Solcast per-site attributes and Open-Meteo's wh_period, and never fell back to the Energy
+     dashboard forecast when the entity had no hourly data, so "today" stayed empty.
   _solarForecast(ds) {
     const c = this._config, hass = this._hass;
     const out = Array(24).fill(0);
@@ -999,6 +1020,65 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const tEnt = c.solar_forecast_tomorrow_entity && hass.states[c.solar_forecast_tomorrow_entity];
     if (tEnt) { const v = energyKWh(tEnt); if (v !== null) tomorrow = v; }
     return { hours: any ? out : null, tomorrow };
+  }
+  [/OLD] */
+  _solarForecast(ds) {
+    const c = this._config, hass = this._hass;
+    const out = Array(24).fill(0);
+    let any = false, tomorrow = null, total = null, source = null;
+    const notes = [];
+    const add = (t, kwh) => {
+      if (!Number.isFinite(t) || !Number.isFinite(kwh)) return;
+      const i = Math.floor((t - ds) / HOUR);
+      if (i >= 0 && i < 24) { out[i] += kwh; any = true; }
+      else if (i >= 24 && i < 48) tomorrow = (tomorrow || 0) + kwh;
+    };
+    // Solcast-style list: [{ period_start, pv_estimate (kW) }], hourly or half-hourly
+    const fromList = (list, hoursPerItem) => list.forEach((p) =>
+      add(toMs(p.period_start ?? p.period_end ?? p.datetime), (num(p.pv_estimate) ?? 0) * hoursPerItem));
+    // dict of { timestamp: Wh }
+    const fromWh = (dict) => Object.entries(dict).forEach(([k, v]) => add(toMs(k), (num(v) ?? 0) / 1000));
+
+    const e = c.solar_forecast_entity && hass.states[c.solar_forecast_entity];
+    if (c.solar_forecast_entity && !e) notes.push(`${c.solar_forecast_entity} not found`);
+    if (e) {
+      const a = e.attributes || {};
+      const keys = Object.keys(a);
+      const perSite = (prefix) => keys.filter((k) => k.startsWith(prefix) && k !== prefix && Array.isArray(a[k]));
+      if (Array.isArray(a.detailedHourly) && a.detailedHourly.length) { fromList(a.detailedHourly, 1); source = "entity:detailedHourly"; }
+      else if (Array.isArray(a.detailedForecast) && a.detailedForecast.length) { fromList(a.detailedForecast, 0.5); source = "entity:detailedForecast"; }
+      else if (perSite("detailedHourly").length) { perSite("detailedHourly").forEach((k) => fromList(a[k], 1)); source = "entity:detailedHourly_<site>"; }
+      else if (perSite("detailedForecast").length) { perSite("detailedForecast").forEach((k) => fromList(a[k], 0.5)); source = "entity:detailedForecast_<site>"; }
+      else if (a.wh_hours && typeof a.wh_hours === "object") { fromWh(a.wh_hours); source = "entity:wh_hours"; }
+      else if (a.wh_period && typeof a.wh_period === "object") { fromWh(a.wh_period); source = "entity:wh_period"; }
+      if (!any) {
+        notes.push(source
+          ? `${c.solar_forecast_entity} (${source.slice(7)}) has no entries for today`
+          : `${c.solar_forecast_entity} has no hourly forecast attributes (has: ${keys.join(", ") || "none"})`);
+        total = energyKWh(e); // still show today's total in the tile
+      }
+    }
+    if (!any) {
+      out.fill(0);
+      tomorrow = null;
+      if (this._solarFcWs && typeof this._solarFcWs === "object") {
+        const entries = Object.values(this._solarFcWs).filter((x) => x && x.wh_hours);
+        entries.forEach((x) => fromWh(x.wh_hours));
+        if (any) source = "energy dashboard";
+        else notes.push(entries.length ? "Energy dashboard forecast has no data for today" : "no forecast is linked to your solar panels in the Energy dashboard");
+      } else if (this._solarFcWsError) notes.push(`Energy dashboard forecast failed: ${this._solarFcWsError}`);
+      else if (this._lastSolarFetch) notes.push("Energy dashboard forecast not loaded yet");
+    }
+    const tEnt = c.solar_forecast_tomorrow_entity && hass.states[c.solar_forecast_tomorrow_entity];
+    if (tEnt) { const v = energyKWh(tEnt); if (v !== null) tomorrow = v; }
+
+    // one console line whenever the outcome changes, to make setup problems easy to see
+    const diag = any ? `today's forecast from ${source}` : `no hourly solar forecast for today: ${notes.join("; ")}`;
+    if (diag !== this._fcDiag) {
+      this._fcDiag = diag;
+      (any ? console.info : console.warn)(`${CARD_TAG}: ${diag}`);
+    }
+    return { hours: any ? out : null, tomorrow, total: any ? null : total };
   }
 
   /* ---------- formatting ---------- */
@@ -1127,6 +1207,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const sf = this._solarForecast(ds);
     m.solarFc = sf.hours;
     m.tomorrow = sf.tomorrow;
+    m.fcTotalOnly = sf.total; // added 2026-10-09: today's total when no hourly forecast exists
 
     // battery
     if (c.battery_soc_entity) {
@@ -1413,9 +1494,17 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         m.solarNow !== null ? `${this._power(m.solarNow)} now` : "",
         m.solarBest >= 0 && m.solar[m.solarBest] > 0 ? `Best hour ${at(m.solarBest)} · ${m.solar[m.solarBest].toFixed(1)} kWh` : ""));
     }
+    /* [OLD 2026-10-09] Showed an unexplained "—" when there was no hourly forecast for today.
     if (m.solarFc || m.tomorrow != null) {
       t.push(this._tile(SW.fc, "Solar forecast", m.solarFc ? this._kwh(m.fcToday) : "—",
         m.solarFc ? `${m.fcLeft.toFixed(1)} kWh still to come` : "",
+        m.tomorrow != null ? `Tomorrow ${m.tomorrow.toFixed(1)} kWh` : ""));
+    }
+    [/OLD] */
+    if (m.solarFc || m.tomorrow != null || m.fcTotalOnly != null) {
+      const value = m.solarFc ? this._kwh(m.fcToday) : m.fcTotalOnly != null ? this._kwh(m.fcTotalOnly) : "—";
+      const s1 = m.solarFc ? `${m.fcLeft.toFixed(1)} kWh still to come` : m.fcTotalOnly != null ? "No hourly data" : "No forecast for today";
+      t.push(this._tile(SW.fc, "Solar forecast", value, s1,
         m.tomorrow != null ? `Tomorrow ${m.tomorrow.toFixed(1)} kWh` : ""));
     }
     if (m.home || m.homeNow !== null) {

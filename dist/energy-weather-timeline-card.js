@@ -33,7 +33,10 @@ const CARD_VERSION = "1.0.4";
 /* [OLD 2026-10-09 v1.1.0->v1.2.0] Version bump for the export price entity.
 const CARD_VERSION = "1.1.0";
 [/OLD] */
+/* [OLD 2026-10-09 v1.2.0->v1.3.0] Version bump for MWh, the Now label on the time axis and fitting the sections grid.
 const CARD_VERSION = "1.2.0";
+[/OLD] */
+const CARD_VERSION = "1.3.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -697,7 +700,10 @@ function chartSvg(W, m) {
   const seen = (j) => kOf(j) + 1 > m.wStart && kOf(j) < wEnd;
   const hasWx = !!(m.slots && m.slots.length);
   const top = hasWx ? 92 : 30;
+  /* [OLD 2026-10-09 v1.2.0->v1.3.0] Fixed plot height; the card now fits its height in a sections grid.
   const posH = 156;
+  [/OLD] */
+  const posH = m.posH || 156;
 
   // scales over the visible hours: one kWh axis for everything, SOC mapped 0-100 % onto the positive half
   const rateAtNow = (a) => (a && m.frac >= 0.2 && a[m.jNow] != null ? a[m.jNow] / m.frac : 0);
@@ -712,6 +718,7 @@ function chartSvg(W, m) {
   const Y = (v) => zero - (Math.max(-kNeg, Math.min(kMax, v)) / kMax) * posH;
   const YS = (p) => zero - (Math.max(0, Math.min(100, p)) / 100) * posH;
   const bottom = zero + (kNeg / kMax) * posH;
+  m.plotScale = 1 + kNeg / kMax; // added 2026-10-09 v1.3.0: the height fit needs this
 
   // lanes under the chart
   const xLabelBase = bottom + 15;
@@ -869,11 +876,21 @@ function chartSvg(W, m) {
     if (m.reserve != null) P.push(`<text class="soc-t small" x="${f(right - 4)}" y="${f(YS(m.reserve) - 5)}" text-anchor="end">Reserve ${Math.round(m.reserve)}%</text>`);
   }
   if (kNeg) P.push(`<text class="exp-t" x="${L + 4}" y="${f(bottom - 4)}">export</text>`);
+  /* [OLD 2026-10-09 v1.2.0->v1.3.0] Hour labels only; the Now chip was at the top.
   for (const t of m.ticks || []) {
     const x = X(t.h);
     if (x < L - 1 || x > right + 1) continue;
     P.push(`<text class="t11${t.day ? " dayt" : ""}" x="${f(x)}" y="${f(xLabelBase)}" text-anchor="middle">${esc(t.label)}</text>`);
   }
+  [/OLD] */
+  // the Now chip sits on the time axis under the plot; hour labels that would touch it are left out
+  const chipW = 14 + m.nowLabel.length * 6.3;
+  for (const t of m.ticks || []) {
+    const x = X(t.h), tw = t.label.length * 6.2;
+    if (x < L - 1 || x > right + 1 || Math.abs(x - nowX) < chipW / 2 + tw / 2 + 4) continue;
+    P.push(`<text class="t11${t.day ? " dayt" : ""}" x="${f(x)}" y="${f(xLabelBase)}" text-anchor="middle">${esc(t.label)}</text>`);
+  }
+  P.push(`<rect class="now-b" x="${f(nowX - chipW / 2)}" y="${f(xLabelBase - 12)}" width="${f(chipW)}" height="16" rx="8"/><text class="now-t" x="${f(nowX)}" y="${f(xLabelBase)}" text-anchor="middle">${esc(m.nowLabel)}</text>`);
 
   const bandLabels = (segs, y, clsOf) => {
     for (const s of segs) {
@@ -895,12 +912,14 @@ function chartSvg(W, m) {
   }
   if (humY != null) P.push(`<text class="t10" x="0" y="${f(humY)}">RH</text>`);
 
-  // top row: now chip first, then every sunrise and sunset in view, nearest to now first
+  // top row: every sunrise and sunset in view, nearest to now first (v1.3.0: the Now chip moved to the time axis)
   const placed = [];
   const fits = (a, b) => placed.every((p) => b < p[0] - 4 || a > p[1] + 4);
+  /* [OLD 2026-10-09 v1.2.0->v1.3.0] The Now chip was here, at the top; it moved to the time axis.
   const chipW = 14 + m.nowLabel.length * 6.3;
   placed.push([nowX - chipW / 2, nowX + chipW / 2]);
   P.push(`<rect class="now-b" x="${f(nowX - chipW / 2)}" y="1" width="${f(chipW)}" height="16" rx="8"/><text class="now-t" x="${f(nowX)}" y="13" text-anchor="middle">${esc(m.nowLabel)}</text>`);
+  [/OLD] */
   const marks = (m.sunMarks || []).slice().sort((a, b) => Math.abs(a.h - m.now) - Math.abs(b.h - m.now));
   for (const s of marks) {
     const x = X(s.h), w = 16 + s.label.length * 6.2, cls = s.kind;
@@ -926,9 +945,13 @@ function chartSvg(W, m) {
 /* ------------------------------------------------------------------ */
 
 const STYLE = `
+/* [OLD 2026-10-09 v1.2.0->v1.3.0] Did not fill the grid cell in a sections view.
 :host { display: block; }
+[/OLD] */
+:host { display: block; height: 100%; }
 ha-card {
   container-type: inline-size;
+  height: 100%; box-sizing: border-box; /* added 2026-10-09 v1.3.0: fill the sections grid cell */
   padding: 20px 20px 18px;
   display: flex; flex-direction: column; gap: 12px;
   overflow: hidden;
@@ -1312,7 +1335,11 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   get hass() { return this._hass; }
 
   getCardSize() { return 16; }
+  /* [OLD 2026-10-09 v1.2.0->v1.3.0] No rows, so the sections grid ignored the card's height.
   getGridOptions() { return { columns: 12, min_columns: 6 }; }
+  [/OLD] */
+  // v1.3.0: a default size in the sections grid; the card fits whatever rows and columns it is given
+  getGridOptions() { return { columns: 12, rows: 12, min_columns: 6, min_rows: 7 }; }
 
   connectedCallback() {
     this._ensureDom();
@@ -1917,7 +1944,13 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     try { return new Intl.NumberFormat(this._lang(), { style: "currency", currency: this._currency(), maximumFractionDigits: 3 }).format(rate); }
     catch (e) { return String(rate); }
   }
+  /* [OLD 2026-10-09 v1.2.0->v1.3.0] Always kWh; 1000 kWh and above now shows as MWh with two decimals.
   _kwh(v) { return `${(v ?? 0).toFixed(1)} kWh`; }
+  [/OLD] */
+  _kwh(v) {
+    const x = v ?? 0;
+    return Math.abs(x) >= 999.95 ? `${(x / 1000).toFixed(2)} MWh` : `${x.toFixed(1)} kWh`; // 999.95 would round to 1000.0 kWh
+  }
   // added 2026-10-09 v1.1.0: duration text for the battery tile, e.g. "3 h 20 min"
   _dur(hours) {
     const mins = Math.max(1, Math.round(hours * 60));
@@ -2676,8 +2709,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const W = this._chartWidth();
     this._width = W;
     if (this._card) this._card.classList.toggle("light", this._hass.themes?.darkMode === false);
+    this._fitOpts = null; // added 2026-10-09 v1.3.0: lay out in full first, then fit
     try {
       this._root.innerHTML = this._buildHtml(W);
+      this._fitHeight(W); // added 2026-10-09 v1.3.0
     } catch (e) {
       console.error(`${CARD_TAG}: render failed`, e);
       this._root.innerHTML = `<div class="note err">Card error: ${esc(e.message)}</div>`;
@@ -2686,6 +2721,46 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       day: this.shadowRoot.querySelector(".day"), dm: this.shadowRoot.querySelector(".dm"),
       hm: this.shadowRoot.querySelector(".hm"), sec: this.shadowRoot.querySelector(".sec"), ap: this.shadowRoot.querySelector(".ap"),
     };
+  }
+
+  // added 2026-10-09 v1.3.0: fit the card into the height it is given (a sections grid with rows set).
+  // The plot grows or shrinks to take up the difference; when it would get too small, the humidity row,
+  // rain lane, tariff bands, tiles and weather icons are left out, in that order. With no fixed height
+  // (masonry view, or no rows) the card is exactly as tall as its content and nothing changes.
+  _fitHeight(W) {
+    const card = this._card, m = this._lastModel;
+    if (!card || !m || !card.isConnected) return;
+    const avail = card.clientHeight;
+    const kids = [...this._root.children];
+    if (!avail || !kids.length) return;
+    const cs = getComputedStyle(card);
+    const gap = parseFloat(cs.rowGap) || 12;
+    // content height: from the card's top edge to the bottom of the last element, plus the bottom padding
+    const used = kids[kids.length - 1].getBoundingClientRect().bottom - card.getBoundingClientRect().top + (parseFloat(cs.paddingBottom) || 0);
+    if (Math.abs(avail - used) < 3) return;
+    const BASE = 156, MIN = 64, MAX = 420, k = m.plotScale || 1; // k: chart pixels per pixel of plot height
+    let posH = BASE + (avail - used) / k;
+    const opts = {};
+    if (posH < MIN) {
+      let need = (MIN - posH) * k;
+      const hasWx = !!(m.slots && m.slots.length);
+      const tiles = this._root.querySelector(".tiles");
+      const steps = [];
+      if (hasWx && m.showHum) steps.push(["noHum", 16]);
+      if (m.rainMm) steps.push(["noRain", 28]);
+      if (m.tariff || m.expTariff) steps.push(["noBands", 20 * ((m.tariff ? 1 : 0) + (m.expTariff ? 1 : 0))]);
+      if (tiles) steps.push(["noTiles", tiles.offsetHeight + gap]);
+      if (hasWx) steps.push(["noWx", 62]);
+      for (const [key, h] of steps) {
+        if (need <= 0) break;
+        opts[key] = true;
+        need -= h;
+      }
+      posH = MIN + Math.max(0, -need) / k;
+    }
+    opts.posH = Math.round(Math.min(MAX, posH));
+    this._fitOpts = opts;
+    this._root.innerHTML = this._buildHtml(W);
   }
 
   _updateClock() {
@@ -2702,6 +2777,14 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   _buildHtml(W) {
     const c = this._config;
     const m = this._model(W);
+    // added 2026-10-09 v1.3.0: what the height fit asked for (plot height, rows to leave out)
+    const fo = this._fitOpts || {};
+    if (fo.posH) m.posH = fo.posH;
+    if (fo.noHum) m.showHum = false;
+    if (fo.noRain) m.rainMm = null;
+    if (fo.noBands) { m.tariff = null; m.expTariff = null; }
+    if (fo.noWx) m.slots = null;
+    this._lastModel = m;
     const out = [this._clockHtml(m)];
     const w = this._warning();
     if (w) out.push(this._warningHtml(w));
@@ -2716,7 +2799,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     if (this._error) out.push(`<div class="note err">${esc(this._error)}</div>`);
     else if (this._fetching && this._statsDay === null && this._entityIds().length) out.push(`<div class="note">Loading today's history…</div>`);
 
+    /* [OLD 2026-10-09 v1.2.0->v1.3.0] Tiles were always shown.
     if (c.show_tiles !== false) out.push(this._tilesHtml(m));
+    [/OLD] */
+    if (c.show_tiles !== false && !fo.noTiles) out.push(this._tilesHtml(m));
     return out.join("");
   }
 
@@ -2802,7 +2888,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         /* [OLD 2026-10-09 v1.0.4->v1.1.0] m.solar is now the timeline window, not today's hours.
         m.solarBest >= 0 && m.solar[m.solarBest] > 0 ? `Best hour ${at(m.solarBest)} · ${m.solar[m.solarBest].toFixed(1)} kWh` : ""));
         [/OLD] */
+        /* [OLD 2026-10-09 v1.2.0->v1.3.0] Always kWh.
         m.solarBest >= 0 && m.solarBestKwh > 0 ? `Best hour ${at(m.solarBest)} · ${m.solarBestKwh.toFixed(1)} kWh` : ""));
+        [/OLD] */
+        m.solarBest >= 0 && m.solarBestKwh > 0 ? `Best hour ${at(m.solarBest)} · ${this._kwh(m.solarBestKwh)}` : ""));
     }
     /* [OLD 2026-10-09] Showed an unexplained "—" when there was no hourly forecast for today.
     if (m.solarFc || m.tomorrow != null) {
@@ -2816,9 +2905,14 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       /* [OLD 2026-10-09 v1.0.1->v1.0.2] Gave no hint why hourly data was missing.
       const s1 = m.solarFc ? `${m.fcLeft.toFixed(1)} kWh still to come` : m.fcTotalOnly != null ? "No hourly data" : "No forecast for today";
       [/OLD] */
+      /* [OLD 2026-10-09 v1.2.0->v1.3.0] Always kWh.
       const s1 = m.solarFc ? `${m.fcLeft.toFixed(1)} kWh still to come` : m.fcTotalOnly != null ? "No hourly data — see browser console" : "No forecast for today";
       t.push(this._tile(SW.fc, "Solar forecast", value, s1,
         m.tomorrow != null ? `Tomorrow ${m.tomorrow.toFixed(1)} kWh` : ""));
+      [/OLD] */
+      const s1 = m.solarFc ? `${this._kwh(m.fcLeft)} still to come` : m.fcTotalOnly != null ? "No hourly data — see browser console" : "No forecast for today";
+      t.push(this._tile(SW.fc, "Solar forecast", value, s1,
+        m.tomorrow != null ? `Tomorrow ${this._kwh(m.tomorrow)}` : ""));
     }
     if (m.home || m.homeNow !== null) {
       t.push(this._tile(SW.home, "Home", m.home ? this._kwh(m.homeToday) : "—",
@@ -2831,8 +2925,12 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     if (m.imp || m.exp || m.gridNow !== null) {
       let now = "";
       if (m.gridNow !== null) now = m.gridNow > 0.02 ? `Importing ${this._power(m.gridNow)}` : m.gridNow < -0.02 ? `Exporting ${this._power(m.gridNow)}` : "0 W now";
+      /* [OLD 2026-10-09 v1.2.0->v1.3.0] Always kWh.
       t.push(this._tile(`${SW.grid}${m.exp ? SW.exp : ""}`, "Grid", m.imp ? `${m.impToday.toFixed(1)} kWh in` : "—",
         m.exp ? `${m.expToday.toFixed(1)} kWh exported` : "", now));
+      [/OLD] */
+      t.push(this._tile(`${SW.grid}${m.exp ? SW.exp : ""}`, "Grid", m.imp ? `${this._kwh(m.impToday)} in` : "—",
+        m.exp ? `${this._kwh(m.expToday)} exported` : "", now));
     }
     /* [OLD 2026-10-09 v1.0.4->v1.1.0] Battery tile gave only 'Full ≈' / 'reserve ≈' clock times while charging or discharging; cost tile showed 'in · out' without saying which was income.
     if (m.socNow != null) {

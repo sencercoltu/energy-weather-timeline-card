@@ -1,0 +1,36 @@
+name: Release
+
+# Publishes a GitHub release whenever CARD_VERSION in the card file changes.
+# HACS shows the release tag as the version and offers it as an update.
+# Older versions stay in the file as commented-out lines above the live one,
+# so the last matching line is the current version.
+on:
+  push:
+    branches: [main]
+    paths: ["dist/energy-weather-timeline-card.js"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Read CARD_VERSION
+        id: version
+        run: |
+          v=$(grep -E '^const CARD_VERSION = "[0-9]+\.[0-9]+\.[0-9]+";' dist/energy-weather-timeline-card.js | tail -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          test -n "$v" || { echo "CARD_VERSION not found"; exit 1; }
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+      - name: Create the release if this version is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG is already released"
+          else
+            gh release create "$TAG" dist/energy-weather-timeline-card.js --title "$TAG" --notes-file <(awk -v t="## $TAG" '$0==t{f=1;next} /^## /{f=0} f' CHANGELOG.md)
+          fi

@@ -3,9 +3,9 @@
 A Home Assistant dashboard card with:
 
 - a clock
-- current weather and a weather-warning banner
-- one 24-hour timeline: hourly weather, solar production and forecast, home use, grid import/export, battery charge with backup reserve, tariff periods, rain, humidity, wind and UV
-- six summary tiles underneath
+- current weather, a weather-warning banner and a red storm alert
+- one sliding timeline with now always in the centre, joining yesterday, today and tomorrow: hourly weather, solar production and forecast, home use, grid import/export, battery charge with backup reserve, import and export tariff periods, rain, humidity and UV
+- six summary tiles underneath, including the battery's time left and today's import cost and export income
 
 It was built and checked against Home Assistant 2026.10. It is a single file with no external downloads, so it works offline and in the Companion app.
 
@@ -53,6 +53,19 @@ The tariff periods use a small YAML box inside the editor:
 
 `type` is `off_peak`, `standard` or `peak`. Any hour not listed uses **Standard import rate**. Rates are in your currency per kWh, so 0.245 means 24.5p. An optional `label:` replaces the default "off-peak" or "peak" text.
 
+**Export tariff periods** use the same format with your export rates, for example a peak export window:
+
+```yaml
+- start: "16:00"
+  end: "19:00"
+  rate: 0.29
+  type: peak
+```
+
+Any hour not listed uses **Standard export rate**. When export periods are set, the timeline shows two bands, **Buy** and **Sell**. Leave them out if your export rate is flat; the flat rate is still used for today's income.
+
+**Timeline length** (under **Show or hide**) is 24, 36 or 48 hours, with now always in the centre. The past half comes from your history, reaching back into yesterday; the future half comes from the weather and solar forecasts, reaching into tomorrow. Each midnight is marked with the day's name, and every sunrise and sunset in view is marked at the top.
+
 ## What each entity needs
 
 - **Energy sensors** (solar, home, grid import, grid export, rain gauge) are cumulative meters, the same ones the Energy dashboard uses. The card reads their hourly statistics. A sensor without statistics (no `state_class`) is read from the recorder history instead. If an energy sensor is missing, or shows no change today while the matching power sensor shows a flow, the card integrates that power sensor over the day instead; for grid power, positive counts as import and negative as export. The browser console (F12) says which source each flow came from.
@@ -91,14 +104,18 @@ tariff:
   - { start: "16:00", end: "19:00", rate: 0.366, type: peak }
 standard_rate: 0.245
 export_rate: 0.15
+export_tariff:
+  - { start: "16:00", end: "19:00", rate: 0.29, type: peak }
+timeline_hours: "24"
 ```
 
 ## Good to know
 
 - **Time zone.** The clock and the timeline follow the time zone in your Home Assistant profile, not the device's. You can set a fixed `time_zone` instead.
-- **Cost is approximate.** It is worked out per hour, at the rate in force at the middle of each hour. A tariff that changes on a half hour (00:30, 05:30) will be a few pence off your bill.
+- **Cost and income are approximate.** Both are worked out per hour, at the rate in force at the middle of each hour. A tariff that changes on a half hour (00:30, 05:30) will be a few pence off your bill. The money tile shows the net amount; it turns green and reads "Today's earnings" when export income is larger than import cost.
 - **Self-powered %** is the share of home use not covered directly by grid import in each hour. That's close to how the Tesla app reports it.
 - **The running hour** is shown dashed. Its value comes from the live meter reading, so it updates as you watch.
-- **Battery estimate.** "Full ≈" and "reserve ≈" only appear when **Usable battery capacity** is set and the battery is actively charging or discharging. Estimates more than two days away show as "in 2+ days".
+- **Battery time left** needs **Usable battery capacity**. Discharging: time until the backup reserve, and the clock time. Charging: time until full. Idle or full: how long it would last at the current home use. Anything over two days shows as "2+ days".
+- **Storm alert.** A red label appears when the hourly forecast for the next 24 hours has thunder, hail or exceptional weather, or gusts of 75 km/h (or a mean wind of 55 km/h) and above. The affected hours are marked red on the timeline. Turn it off with **Storm alert** under **Show or hide**.
 - **Light themes** are supported; the card switches its night shading and icon colours automatically.
 - **Versions.** The version is shown in the card picker and in the browser console. In the GitHub repo, changing `CARD_VERSION` and pushing publishes a matching release automatically, which HACS then offers as an update.

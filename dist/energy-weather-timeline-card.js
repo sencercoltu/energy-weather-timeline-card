@@ -1,10 +1,11 @@
 /**
  * Energy & Weather Timeline Card
  * ------------------------------------------------------------------
- * Clock, current weather, warning banner and a single 24-hour timeline with
- * hourly weather, solar production + forecast, home use, grid import/export,
- * battery state of charge, backup reserve, tariff band, rain, humidity, wind
- * and UV, followed by six summary tiles.
+ * Clock, current weather, warning banner, storm alert and one sliding timeline
+ * centred on now (yesterday, today and tomorrow joined) with hourly weather,
+ * solar production + forecast, home use, grid import/export, battery state of
+ * charge, backup reserve, import and export tariff bands, rain, humidity and UV,
+ * followed by six summary tiles.
  *
  * Target:   Home Assistant 2026.10
  * Card:     type: custom:energy-weather-timeline-card
@@ -26,7 +27,10 @@ const CARD_VERSION = "1.0.2";
 /* [OLD 2026-10-09 v1.0.3->v1.0.4] Version bump to publish the first GitHub release with the release workflow.
 const CARD_VERSION = "1.0.3";
 [/OLD] */
+/* [OLD 2026-10-09 v1.0.4->v1.1.0] Version bump for the sliding timeline, export tariff, storm alert and battery time left.
 const CARD_VERSION = "1.0.4";
+[/OLD] */
+const CARD_VERSION = "1.1.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -83,6 +87,12 @@ const bearingDeg = (b) => {
   return i >= 0 ? i * 22.5 : null;
 };
 const compass = (deg) => COMPASS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
+
+// added 2026-10-09 v1.1.0: storm alert — wind units to km/h, and what counts as storm-force
+const WIND_KMH = { "km/h": 1, "m/s": 3.6, mph: 1.609344, kn: 1.852, knots: 1.852, "ft/s": 1.09728 };
+const STORM_GUST_KMH = 75;  // gusts at or above this raise the alert
+const STORM_WIND_KMH = 55;  // as does a mean wind at or above this
+const STORM_AHEAD_H = 24;   // how far ahead the forecast is checked
 
 /* ------------------------------------------------------------------ */
 /* Time zone helpers (the card follows HA's time zone, not the device) */
@@ -313,9 +323,11 @@ function readForecastAttributes(attrs, ds, stateKwh) {
     for (const [unit, conv] of UNITS) {
       const out = Array(24).fill(0);
       let any = false, tomorrow = 0, today = 0;
+      const byHour = {}; // added 2026-10-09 v1.1.0: every hour in the series, keyed by hours since ds
       for (const [t0, v] of cd.pts) {
         const t = t0 + cd.shift * step * HOUR;
         const i = Math.floor((t - ds) / HOUR), kwh = conv(v, step);
+        byHour[i] = (byHour[i] || 0) + kwh; // added 2026-10-09 v1.1.0
         if (i >= 0 && i < 24) { out[i] += kwh; today += kwh; any = true; }
         else if (i >= 24 && i < 48) tomorrow += kwh;
       }
@@ -324,7 +336,10 @@ function readForecastAttributes(attrs, ds, stateKwh) {
         ? (today > 0 ? Math.abs(Math.log(today / stateKwh)) : 99) - nameBonus
         : (unit === guessUnit(cd) ? 0 : 1) - nameBonus;
       if (!best || score < best.score)
+        /* [OLD 2026-10-09 v1.0.4->v1.1.0] Returned today's hours only.
         best = { score, hours: out, tomorrow: tomorrow || null, label: `${cd.name}${cd.vk ? `.${cd.vk}` : ""} (${unit} per ${r1(step * 60)} min)` };
+        [/OLD] */
+        best = { score, hours: out, tomorrow: tomorrow || null, byHour, label: `${cd.name}${cd.vk ? `.${cd.vk}` : ""} (${unit} per ${r1(step * 60)} min)` };
     }
   }
   if (!best) return { hours: null, note: `time series found (${[...grouped.keys()].join(", ")}) but none has entries for today` };
@@ -336,6 +351,7 @@ function readForecastAttributes(attrs, ds, stateKwh) {
 /* ------------------------------------------------------------------ */
 
 // Hourly change of a cumulative meter from its raw recorder history (handles meter resets)
+// v1.1.0: ds is the start of the first hour, nh the index of the running hour (any length, not just one day)
 function cumulativeHours(series, live, ds, now, nh) {
   const pts = series.slice();
   if (live !== null && live !== undefined) pts.push([now, live]);
@@ -344,7 +360,12 @@ function cumulativeHours(series, live, ds, now, nh) {
     for (const [ts, x] of pts) { if (ts <= t) v = x; else break; }
     return v;
   };
+  /* [OLD 2026-10-09 v1.0.4->v1.1.0] Fixed 24-hour day; the sliding timeline reaches back into yesterday.
   const arr = Array(24).fill(null);
+  for (let h = 0; h <= nh; h++) {
+    const a = valAt(ds + h * HOUR), b = valAt(Math.min(now, ds + (h + 1) * HOUR));
+  [/OLD] */
+  const arr = Array(nh + 1).fill(null);
   for (let h = 0; h <= nh; h++) {
     const a = valAt(ds + h * HOUR), b = valAt(Math.min(now, ds + (h + 1) * HOUR));
     arr[h] = a === null || b === null ? 0 : b >= a ? b - a : Math.max(0, b);
@@ -354,13 +375,18 @@ function cumulativeHours(series, live, ds, now, nh) {
 
 // Hourly kWh from a power sensor's history (kW, signed). sign picks the direction to count:
 // +1 counts positive power (import, production, use), -1 counts negative power (export).
+// v1.1.0: ds is the start of the first hour, nh the index of the running hour (any length, not just one day)
 function integratePower(series, live, sign, ds, now, nh) {
   const pts = series.slice();
   if (live && live[1] !== null && Number.isFinite(live[0])) {
     const lastT = pts.length ? pts[pts.length - 1][0] : ds;
     pts.push([Math.max(lastT, Math.min(now, live[0])), live[1]]);
   }
+  /* [OLD 2026-10-09 v1.0.4->v1.1.0] Fixed 24-hour day; the sliding timeline reaches back into yesterday.
   const arr = Array(24).fill(null);
+  for (let h = 0; h <= nh; h++) arr[h] = 0;
+  [/OLD] */
+  const arr = Array(nh + 1).fill(null);
   for (let h = 0; h <= nh; h++) arr[h] = 0;
   for (let i = 0; i < pts.length; i++) {
     let t0 = Math.max(ds, pts[i][0]);
@@ -370,7 +396,10 @@ function integratePower(series, live, sign, ds, now, nh) {
     while (t0 < t1) {
       const h = Math.floor((t0 - ds) / HOUR);
       const end = Math.min(t1, ds + (h + 1) * HOUR);
+      /* [OLD 2026-10-09 v1.0.4->v1.1.0] Fixed 24-hour day.
       if (h >= 0 && h < 24) arr[h] += (kw * (end - t0)) / HOUR;
+      [/OLD] */
+      if (h >= 0 && h <= nh) arr[h] += (kw * (end - t0)) / HOUR;
       t0 = end;
     }
   }
@@ -393,6 +422,7 @@ function smooth(pts, base, top) {
 }
 const fmtTick = (v) => (v < 0 ? "−" : "") + String(r1(Math.abs(v)));
 
+/* [OLD 2026-10-09 v1.0.4->v1.1.0] Fixed midnight-to-midnight day; replaced by the sliding window below. Also drew the wind row and the 'Today so far' / 'Forecast' labels.
 function chartSvg(W, m) {
   const f = r1;
   const L = 30, R = m.soc ? 40 : 14;
@@ -596,6 +626,245 @@ function chartSvg(W, m) {
 
   return { svg: `<svg class="tl" width="${f(W)}" height="${H}" viewBox="0 0 ${f(W)} ${H}" role="img" aria-label="Today's energy and weather timeline">${P.join("")}</svg>`, H };
 }
+[/OLD] */
+
+// v1.1.0: sliding window centred on now. Hours are counted from today's midnight (negative = yesterday,
+// 24 and up = tomorrow). Arrays in the model start at hour m.k0; m.wStart and m.span give the visible range.
+function chartSvg(W, m) {
+  const f = r1;
+  const L = 30, R = m.soc ? 40 : 14;
+  const iw = Math.max(60, W - L - R);
+  const right = L + iw;
+  const X = (h) => L + ((h - m.wStart) / m.span) * iw;
+  const Xc = (h) => Math.max(L, Math.min(right, X(h)));
+  const wEnd = m.wStart + m.span;
+  const kOf = (j) => m.k0 + j;
+  const seen = (j) => kOf(j) + 1 > m.wStart && kOf(j) < wEnd;
+  const hasWx = !!(m.slots && m.slots.length);
+  const top = hasWx ? 92 : 30;
+  const posH = 156;
+
+  // scales over the visible hours: one kWh axis for everything, SOC mapped 0-100 % onto the positive half
+  const rateAtNow = (a) => (a && m.frac >= 0.2 && a[m.jNow] != null ? a[m.jNow] / m.frac : 0);
+  let maxPos = 0;
+  for (const a of [m.solar, m.solarFc, m.home, m.imp]) if (a) a.forEach((v, j) => { if (v != null && v > maxPos && seen(j)) maxPos = v; });
+  maxPos = Math.max(maxPos, rateAtNow(m.home), rateAtNow(m.imp));
+  const kMax = maxPos <= 1 ? 1 : maxPos <= 2 ? 2 : Math.ceil(maxPos);
+  let maxExp = 0;
+  if (m.exp) m.exp.forEach((v, j) => { if (v != null && v > maxExp && seen(j)) maxExp = v; });
+  const kNeg = m.exp ? Math.max(0.5, Math.ceil(maxExp * 2) / 2) : 0;
+  const zero = top + posH;
+  const Y = (v) => zero - (Math.max(-kNeg, Math.min(kMax, v)) / kMax) * posH;
+  const YS = (p) => zero - (Math.max(0, Math.min(100, p)) / 100) * posH;
+  const bottom = zero + (kNeg / kMax) * posH;
+
+  // lanes under the chart
+  const xLabelBase = bottom + 15;
+  let rowY = bottom + 24;
+  let tariffY = null, expTariffY = null, rainBase = null, humY = null;
+  if (m.tariff) { tariffY = rowY; rowY += 20; }
+  if (m.expTariff) { expTariffY = rowY; rowY += 20; }
+  if (m.rainMm) { rainBase = rowY + 22; rowY += 28; }
+  if (hasWx && m.showHum) { humY = rowY + 10; rowY += 16; }
+  const H = Math.ceil(rowY + 2);
+  const nowX = X(m.now);
+  const G = []; // data layers, clipped to the plot area
+  const P = []; // icons and labels, drawn on top
+  const rect = (x0, x1, y0, y1) => `M${f(x0)},${f(y0)}H${f(x1)}V${f(y1)}H${f(x0)}Z`;
+
+  // background: night, forecast tint, day dividers, grid lines
+  let night = "";
+  for (const [a, b] of m.nights || []) if (b > m.wStart && a < wEnd) night += rect(Xc(a), Xc(b), 20, H);
+  if (night) G.push(`<path class="night" d="${night}"/>`);
+  G.push(`<path class="fct" d="${rect(nowX, right, 20, H)}"/>`);
+  let dd = "";
+  for (const h of m.days || []) dd += `M${f(X(h))},20V${H}`;
+  if (dd) G.push(`<path class="daysep" d="${dd}"/>`);
+  let gl = "";
+  for (let i = 1; i <= 4; i++) gl += `M${L},${f(Y((kMax * i) / 4))}H${f(right)}`;
+  G.push(`<path class="gl" d="${gl}"/>`);
+  if (kNeg) G.push(`<path class="gl dash" d="M${L},${f(Y(-kNeg))}H${f(right)}"/>`);
+
+  // battery SOC area, reserve, line
+  if (m.soc) {
+    if (m.soc.length > 1) {
+      let d = "";
+      m.soc.forEach((p, i) => { d += `${i ? "L" : "M"}${f(X(p[0]))},${f(YS(p[1]))}`; });
+      const first = m.soc[0], last = m.soc[m.soc.length - 1];
+      G.push(`<path class="soc-a" d="${d}L${f(X(last[0]))},${f(zero)}L${f(X(first[0]))},${f(zero)}Z"/>`);
+      if (m.reserve != null) G.push(`<path class="res" d="M${L},${f(YS(m.reserve))}H${f(right)}"/>`);
+      G.push(`<path class="soc-l" d="${d}"/>`);
+    } else if (m.reserve != null) {
+      G.push(`<path class="res" d="M${L},${f(YS(m.reserve))}H${f(right)}"/>`);
+    }
+  }
+
+  // bars: solar up, export down; the running hour is drawn dashed
+  const bw = (iw / m.span) * 0.62;
+  const bar = (k, v, down) => {
+    const x0 = X(k + 0.5) - bw / 2, y = Y(down ? -v : v), hgt = Math.abs(y - zero);
+    if (hgt < 0.5) return "";
+    const r = Math.min(3, hgt / 2, bw / 2);
+    return down
+      ? `M${f(x0)},${f(zero)}V${f(y - r)}Q${f(x0)},${f(y)} ${f(x0 + r)},${f(y)}H${f(x0 + bw - r)}Q${f(x0 + bw)},${f(y)} ${f(x0 + bw)},${f(y - r)}V${f(zero)}Z`
+      : `M${f(x0)},${f(zero)}V${f(y + r)}Q${f(x0)},${f(y)} ${f(x0 + r)},${f(y)}H${f(x0 + bw - r)}Q${f(x0 + bw)},${f(y)} ${f(x0 + bw)},${f(y + r)}V${f(zero)}Z`;
+  };
+  const bars = (arr, down, cls) => {
+    if (!arr) return;
+    let full = "", part = "";
+    arr.forEach((v, j) => {
+      if (v == null || v <= 0 || j > m.jNow) return;
+      if (j === m.jNow) part = bar(kOf(j), v, down);
+      else full += bar(kOf(j), v, down);
+    });
+    if (full) G.push(`<path class="${cls}" d="${full}"/>`);
+    if (part) G.push(`<path class="${cls} part" d="${part}"/>`);
+  };
+  bars(m.solar, false, "sol");
+  bars(m.exp, true, "exp");
+  G.push(`<path class="axis" d="M${L},${f(zero)}H${f(right)}"/>`);
+
+  // solar forecast wherever a source has hours (yesterday, today, tomorrow); gaps split the line
+  if (m.solarFc) {
+    let run = [];
+    const flush = () => {
+      if (run.length) {
+        const pts = [[X(run[0][0]), zero]].concat(run.map(([k, v]) => [X(k + 0.5), Y(v)]), [[X(run[run.length - 1][0] + 1), zero]]);
+        G.push(`<path class="fc" d="${smooth(pts, zero, top)}"/>`);
+      }
+      run = [];
+    };
+    m.solarFc.forEach((v, j) => { if (v == null) flush(); else run.push([kOf(j), v]); });
+    flush();
+  }
+  // grid import and home use, up to now (running hour shown as its rate)
+  const line = (arr, cls) => {
+    if (!arr) return;
+    const pts = [];
+    for (let j = 0; j < m.jNow; j++) if (arr[j] != null) pts.push([X(kOf(j) + 0.5), Y(arr[j])]);
+    if (m.frac >= 0.2 && arr[m.jNow] != null) pts.push([nowX, Y(arr[m.jNow] / m.frac)]);
+    if (pts.length < 2) return;
+    G.push(`<path class="${cls}" d="${smooth(pts, zero, top)}"/>`);
+  };
+  line(m.imp, "imp");
+  line(m.home, "home");
+
+  // tariff bands: import, then export
+  const band = (segs, y, clsOf) => {
+    for (const s of segs) {
+      const x0 = Xc(s.a) + 0.5, x1 = Xc(s.b) - 0.5;
+      if (x1 - x0 >= 1) G.push(`<path class="${clsOf(s)}" d="${rect(x0, x1, y, y + 14)}"/>`);
+    }
+  };
+  const impCls = (s) => (s.type === "off_peak" ? "t-off" : s.type === "peak" ? "t-peak" : "t-std");
+  const expCls = (s) => (s.type === "off_peak" ? "e-off" : s.type === "peak" ? "e-peak" : "e-std");
+  if (m.tariff) band(m.tariff, tariffY, impCls);
+  if (m.expTariff) band(m.expTariff, expTariffY, expCls);
+
+  // rain lane: faint = chance, solid = mm
+  let probLabel = null;
+  if (rainBase != null) {
+    G.push(`<path class="lane" d="M${L},${f(rainBase + 0.5)}H${f(right)}"/>`);
+    let maxMm = 0.5;
+    m.rainMm.forEach((v, j) => { if (v != null && v > maxMm && seen(j)) maxMm = v; });
+    let pp = "", mm = "", bestP = 0;
+    for (let j = 0; j < m.rainMm.length; j++) {
+      const k = kOf(j), cx = X(k + 0.5);
+      const p = m.rainProb ? m.rainProb[j] : null;
+      if (p != null && p > 0) {
+        pp += rect(cx - bw / 2, cx + bw / 2, rainBase - (p / 100) * 22, rainBase);
+        if (p >= 30 && p > bestP && cx > L + 8 && cx < right - 8) { bestP = p; probLabel = { x: cx, y: rainBase - (p / 100) * 22 - 3, t: `${Math.round(p)}%` }; }
+      }
+      const v = m.rainMm[j];
+      if (v != null && v > 0) mm += rect(cx - bw / 4, cx + bw / 4, rainBase - Math.max(2.5, (v / maxMm) * 22), rainBase);
+    }
+    if (pp) G.push(`<path class="pop" d="${pp}"/>`);
+    if (mm) G.push(`<path class="mm" d="${mm}"/>`);
+  }
+
+  // storm hours: red strip under the weather lane
+  if (hasWx && m.storm && m.storm.spans) {
+    let sb = "";
+    for (const [a, b] of m.storm.spans) if (b > m.wStart && a < wEnd) sb += rect(Xc(a) + 0.5, Xc(b) - 0.5, top - 10, top - 6);
+    if (sb) G.push(`<path class="storm-b" d="${sb}"/>`);
+  }
+
+  // now line + battery dot
+  G.push(`<path class="nowl" d="M${f(nowX)},20V${H}"/>`);
+  if (m.soc && m.socNow != null) G.push(`<circle class="soc-d" cx="${f(nowX)}" cy="${f(YS(m.socNow))}" r="4"/>`);
+
+  // weather lane and humidity row
+  if (hasWx) {
+    for (const s of m.slots) {
+      const x = X(s.h);
+      P.push(`<svg x="${f(x - 14)}" y="20" width="28" height="28" viewBox="0 0 32 32">${iconPaths(s.cond, s.night)}</svg>`);
+      if (s.temp != null) P.push(`<text class="tmp" x="${f(x)}" y="61" text-anchor="middle">${esc(s.temp)}</text>`);
+      if (s.uv) P.push(`<rect class="uvb" x="${f(x - 15)}" y="65" width="30" height="12" rx="3"/><text class="uvt" x="${f(x)}" y="74" text-anchor="middle">${esc(s.uv)}</text>`);
+      if (humY != null && s.hum != null) P.push(`<text class="t10" x="${f(x)}" y="${f(humY)}" text-anchor="middle">${Math.round(s.hum)}%</text>`);
+    }
+  }
+
+  // axis labels
+  P.push(`<text class="t11" x="0" y="${f(top - 6)}">kWh</text>`);
+  const kt = [kMax, kMax / 2, 0];
+  if (kNeg) kt.push(-kNeg);
+  for (const v of kt) P.push(`<text class="t11" x="${L - 6}" y="${f(Y(v) + 4)}" text-anchor="end">${fmtTick(v)}</text>`);
+  if (m.soc) {
+    for (const p of [100, 50, 0]) P.push(`<text class="soc-t" x="${f(right + 6)}" y="${f(YS(p) + 4)}">${p}%</text>`);
+    if (m.reserve != null) P.push(`<text class="soc-t small" x="${f(right - 4)}" y="${f(YS(m.reserve) - 5)}" text-anchor="end">Reserve ${Math.round(m.reserve)}%</text>`);
+  }
+  if (kNeg) P.push(`<text class="exp-t" x="${L + 4}" y="${f(bottom - 4)}">export</text>`);
+  for (const t of m.ticks || []) {
+    const x = X(t.h);
+    if (x < L - 1 || x > right + 1) continue;
+    P.push(`<text class="t11${t.day ? " dayt" : ""}" x="${f(x)}" y="${f(xLabelBase)}" text-anchor="middle">${esc(t.label)}</text>`);
+  }
+
+  const bandLabels = (segs, y, clsOf) => {
+    for (const s of segs) {
+      const x0 = Xc(s.a), x1 = Xc(s.b), lbl = m.rateLabel(s);
+      if (lbl && x1 - x0 > lbl.length * 5.6 + 8) P.push(`<text class="${clsOf(s)}" x="${f((x0 + x1) / 2)}" y="${f(y + 10.5)}" text-anchor="middle">${esc(lbl)}</text>`);
+    }
+  };
+  if (m.tariff) {
+    P.push(`<text class="t10" x="0" y="${f(tariffY + 10.5)}">${m.expTariff ? "Buy" : "Rate"}</text>`);
+    bandLabels(m.tariff, tariffY, (s) => (s.type === "off_peak" ? "tl-off" : s.type === "peak" ? "tl-peak" : "tl-std"));
+  }
+  if (m.expTariff) {
+    P.push(`<text class="t10" x="0" y="${f(expTariffY + 10.5)}">Sell</text>`);
+    bandLabels(m.expTariff, expTariffY, (s) => (s.type === "peak" ? "el-peak" : "el-std"));
+  }
+  if (rainBase != null) {
+    P.push(`<text class="t10 rain-t" x="0" y="${f(rainBase - 5)}">Rain</text>`);
+    if (probLabel) P.push(`<text class="rain-t t9" x="${f(probLabel.x)}" y="${f(probLabel.y)}" text-anchor="middle">${probLabel.t}</text>`);
+  }
+  if (humY != null) P.push(`<text class="t10" x="0" y="${f(humY)}">RH</text>`);
+
+  // top row: now chip first, then every sunrise and sunset in view, nearest to now first
+  const placed = [];
+  const fits = (a, b) => placed.every((p) => b < p[0] - 4 || a > p[1] + 4);
+  const chipW = 14 + m.nowLabel.length * 6.3;
+  placed.push([nowX - chipW / 2, nowX + chipW / 2]);
+  P.push(`<rect class="now-b" x="${f(nowX - chipW / 2)}" y="1" width="${f(chipW)}" height="16" rx="8"/><text class="now-t" x="${f(nowX)}" y="13" text-anchor="middle">${esc(m.nowLabel)}</text>`);
+  const marks = (m.sunMarks || []).slice().sort((a, b) => Math.abs(a.h - m.now) - Math.abs(b.h - m.now));
+  for (const s of marks) {
+    const x = X(s.h), w = 16 + s.label.length * 6.2, cls = s.kind;
+    const x0 = [x - w / 2, x - w / 2 + 14, x - w / 2 - 14, x - w / 2 + 26, x - w / 2 - 26].find((a) => a >= 0 && a + w <= W && fits(a, a + w));
+    if (x0 === undefined) continue;
+    placed.push([x0, x0 + w]);
+    P.push(`<path class="${cls}" d="M${f(x0 + 1)},12a5,5 0 0,1 10,0Z"/>`);
+    if (cls === "rise") P.push(`<path class="rise-l" d="M${f(x0 + 6)},2V4.5"/>`);
+    P.push(`<text class="${cls}-t" x="${f(x0 + 14)}" y="13">${esc(s.label)}</text>`);
+  }
+
+  const clip = `${m.uid || "ewt"}-clip`;
+  return {
+    svg: `<svg class="tl" width="${f(W)}" height="${H}" viewBox="0 0 ${f(W)} ${H}" role="img" aria-label="Energy and weather timeline, now in the centre">`
+      + `<defs><clipPath id="${clip}"><rect x="${L}" y="0" width="${f(iw)}" height="${H}"/></clipPath></defs>`
+      + `<g clip-path="url(#${clip})">${G.join("")}</g>${P.join("")}</svg>`,
+    H,
+  };
+}
 
 /* ------------------------------------------------------------------ */
 /* Styles                                                              */
@@ -696,6 +965,18 @@ svg.tl text { font-family: inherit; }
 .sw-cost { fill: none; stroke: var(--secondary-text-color); stroke-width: 1.3; }
 .note { font-size: 12px; color: var(--secondary-text-color); text-align: center; }
 .note.err { color: var(--error-color, #db4437); }
+/* added 2026-10-09 v1.1.0: day dividers, export tariff band, storm alert, earnings */
+.daysep { fill: none; stroke: var(--secondary-text-color); stroke-opacity: 0.35; stroke-width: 1; }
+.dayt { fill: var(--primary-text-color); font-weight: 600; }
+.e-std { fill: #9575CD; fill-opacity: 0.16; }
+.e-off { fill: #9575CD; fill-opacity: 0.08; }
+.e-peak { fill: #5E3E9E; }
+.el-std { fill: var(--secondary-text-color); font-size: 10px; } .el-peak { fill: #E6DBFF; font-size: 10px; }
+.storm-b { fill: #E53935; }
+.storm { align-self: center; max-width: 100%; box-sizing: border-box; display: inline-flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 2px 8px; padding: 5px 14px; border-radius: 16px; background: #C62828; color: #FFFFFF; font-size: 13px; line-height: 1.3; text-align: center; }
+.storm .s-title { font-weight: 600; }
+.storm svg path { fill: #FFFFFF; }
+.tile .tv.earn { color: var(--ewt-soc-text); }
 `;
 
 /* ------------------------------------------------------------------ */
@@ -727,7 +1008,10 @@ const LABELS = {
   battery_reserve: "Backup reserve",
   tariff: "Tariff periods",
   standard_rate: "Standard import rate (per kWh)",
+  /* [OLD 2026-10-09 v1.0.4->v1.1.0] Label did not say it is the rate for hours outside the export tariff periods.
   export_rate: "Export rate (per kWh)",
+  [/OLD] */
+  export_rate: "Standard export rate (per kWh)",
   import_rate_entity: "Import price entity (optional)",
   currency: "Currency",
   show_warning: "Warning banner",
@@ -736,6 +1020,9 @@ const LABELS = {
   show_humidity: "Humidity row",
   show_wind: "Wind row",
   show_tiles: "Summary tiles",
+  timeline_hours: "Timeline length", // added 2026-10-09 v1.1.0
+  export_tariff: "Export tariff periods (optional)", // added 2026-10-09 v1.1.0
+  show_storm_alert: "Storm alert", // added 2026-10-09 v1.1.0
 };
 const HELPERS = {
   rain_entity: "A total/total_increasing precipitation sensor. Fills the rain lane for past hours; forecast hours always come from the weather entity.",
@@ -754,6 +1041,10 @@ const HELPERS = {
   tariff: "List of periods. Example:\n- start: '00:30'\n  end: '05:30'\n  rate: 0.075\n  type: off_peak\n- start: '16:00'\n  end: '19:00'\n  rate: 0.366\n  type: peak\ntype is off_peak, standard or peak. Hours not listed use the standard rate. Optional label replaces the default text.",
   import_rate_entity: "Used for the cost tile when no tariff periods are set. Its recorded history gives each hour's price.",
   currency: "Leave empty to use the Home Assistant currency.",
+  export_rate: "Used for every hour not covered by the export tariff periods.", // added 2026-10-09 v1.1.0
+  export_tariff: "Same format as the import tariff periods, with your export rates. Example:\n- start: '16:00'\n  end: '19:00'\n  rate: 0.29\n  type: peak\nHours not listed use the standard export rate. Shown as a second band and used for today's income.", // added 2026-10-09 v1.1.0
+  timeline_hours: "How many hours the timeline shows, with now always in the centre. Joins yesterday, today and tomorrow.", // added 2026-10-09 v1.1.0
+  show_storm_alert: "A red label when the hourly forecast has thunder, hail, exceptional weather or storm-force wind in the next 24 hours.", // added 2026-10-09 v1.1.0
 };
 
 const ENERGY_SENSOR = { entity: { filter: { domain: "sensor", device_class: "energy" } } };
@@ -789,6 +1080,9 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     this._fmtCache = new Map();
     this._series = {};   // added 2026-10-09 v1.0.3: raw recorder history for energy/power fallbacks
     this._flowDiag = {}; // added 2026-10-09 v1.0.3: last console diagnosis per energy flow
+    this._expTariff = []; // added 2026-10-09 v1.1.0: export tariff periods
+    this._fsK = 0; // added 2026-10-09 v1.1.0: first fetched hour, counted from today's midnight
+    this._uid = `ewt${Math.random().toString(36).slice(2, 8)}`; // added 2026-10-09 v1.1.0: unique SVG ids
   }
 
   /* ---------- editor ---------- */
@@ -854,6 +1148,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
                 { name: "export_rate", selector: { number: { min: 0, max: 10, step: 0.001, mode: "box" } } },
               ],
             },
+            { name: "export_tariff", selector: { object: {} } }, // added 2026-10-09 v1.1.0
             { name: "import_rate_entity", selector: { entity: { filter: { domain: "sensor" } } } },
             { name: "currency", selector: { text: {} } },
           ],
@@ -861,6 +1156,14 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         {
           name: "display", type: "expandable", flatten: true, title: "Show or hide",
           schema: [
+            { // added 2026-10-09 v1.1.0
+              name: "timeline_hours",
+              selector: { select: { mode: "dropdown", options: [
+                { value: "24", label: "24 hours (12 either side of now)" },
+                { value: "36", label: "36 hours (18 either side of now)" },
+                { value: "48", label: "48 hours (24 either side of now)" },
+              ] } },
+            },
             {
               name: "", type: "grid", flatten: true,
               schema: [
@@ -868,7 +1171,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
                 { name: "show_tariff", selector: { boolean: {} } },
                 { name: "show_rain", selector: { boolean: {} } },
                 { name: "show_humidity", selector: { boolean: {} } },
+                /* [OLD 2026-10-09 v1.0.4->v1.1.0] The wind row was removed from the timeline.
                 { name: "show_wind", selector: { boolean: {} } },
+                [/OLD] */
+                { name: "show_storm_alert", selector: { boolean: {} } },
                 { name: "show_tiles", selector: { boolean: {} } },
               ],
             },
@@ -880,6 +1186,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       assertConfig: (config) => {
         if (config.tariff !== undefined && config.tariff !== null && !Array.isArray(config.tariff))
           throw new Error("'tariff' must be a list of periods");
+        if (config.export_tariff !== undefined && config.export_tariff !== null && !Array.isArray(config.export_tariff)) // added 2026-10-09 v1.1.0
+          throw new Error("'export_tariff' must be a list of periods");
       },
     };
   }
@@ -902,13 +1210,23 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     if (!config || typeof config !== "object") throw new Error("Invalid configuration");
     if (config.tariff !== undefined && config.tariff !== null && !Array.isArray(config.tariff))
       throw new Error("'tariff' must be a list of periods");
+    if (config.export_tariff !== undefined && config.export_tariff !== null && !Array.isArray(config.export_tariff)) // added 2026-10-09 v1.1.0
+      throw new Error("'export_tariff' must be a list of periods");
     const prev = this._config;
+    /* [OLD 2026-10-09 v1.0.4->v1.1.0] Defaults had the wind row and no storm alert.
     this._config = {
       show_seconds: true, show_warning: true, show_tariff: true, show_rain: true,
       show_humidity: true, show_wind: true, show_tiles: true, battery_reserve: 20,
       ...config,
     };
+    [/OLD] */
+    this._config = {
+      show_seconds: true, show_warning: true, show_tariff: true, show_rain: true,
+      show_humidity: true, show_tiles: true, show_storm_alert: true, battery_reserve: 20,
+      ...config,
+    };
     this._tariff = parseTariff(this._config.tariff);
+    this._expTariff = parseTariff(this._config.export_tariff); // added 2026-10-09 v1.1.0
     if (prev && prev.weather_entity !== this._config.weather_entity) {
       this._wxHist = [];
       this._forecast = null;
@@ -1042,6 +1360,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const tz = this._tz(), now = Date.now(), ds = dayStart(now, tz);
     const hs = ds + Math.floor((now - ds) / HOUR) * HOUR;
     const nh = Math.floor((now - ds) / HOUR);
+    // added 2026-10-09 v1.1.0: fetch from the first hour the sliding timeline can show (reaches into yesterday)
+    const fsK = this._fetchStartK(now, ds), fs = ds + fsK * HOUR, nI = nh - fsK;
     this._lastFetch = now;
     this._fetchHour = hs;
     const iso = (ms) => new Date(ms).toISOString();
@@ -1102,17 +1422,28 @@ class EnergyWeatherTimelineCard extends HTMLElement {
             types: ["change", "state"], units: { energy: "kWh", distance: "mm" },
           });
         try {
+          /* [OLD 2026-10-09 v1.0.4->v1.1.0] Fetched today only.
           const [hourly, five] = await Promise.all([req("hour", ds), req("5minute", hs)]);
+          [/OLD] */
+          const [hourly, five] = await Promise.all([req("hour", fs), req("5minute", hs)]);
           for (const id of statIds) {
             const rows = (hourly && hourly[id]) || [];
             const fl = (five && five[id]) || [];
             if (!rows.length && !fl.length) continue; // no long-term statistics for this sensor
+            /* [OLD 2026-10-09 v1.0.4->v1.1.0] Hours counted from today's midnight only.
             const arr = Array(24).fill(null);
             for (let i = 0; i < nh; i++) arr[i] = 0;
             let b = null;
             for (const p of rows) {
               const st = toMs(p.start), i = Math.floor((st - ds) / HOUR + 1e-6);
               if (i >= 0 && i < nh) arr[i] = Math.max(0, num(p.change) ?? 0);
+            [/OLD] */
+            const arr = Array(nI + 1).fill(null);
+            for (let i = 0; i < nI; i++) arr[i] = 0;
+            let b = null;
+            for (const p of rows) {
+              const st = toMs(p.start), i = Math.floor((st - fs) / HOUR + 1e-6);
+              if (i >= 0 && i < nI) arr[i] = Math.max(0, num(p.change) ?? 0);
               const e = p.end != null ? toMs(p.end) : st + HOUR;
               if (Math.abs(e - hs) < 1000 && num(p.state) !== null) b = { state: num(p.state), change: 0 };
             }
@@ -1136,14 +1467,22 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         const powerIds = new Set(flows.map((f) => f.power).filter(Boolean));
         try {
           const r = await hass.callWS({
+            /* [OLD 2026-10-09 v1.0.4->v1.1.0] Fetched today only.
             type: "history/history_during_period", start_time: iso(ds), end_time: iso(now),
+            entity_ids: [...histIds], minimal_response: true, no_attributes: true, significant_changes_only: false,
+            [/OLD] */
+            type: "history/history_during_period", start_time: iso(fs), end_time: iso(now),
             entity_ids: [...histIds], minimal_response: true, no_attributes: true, significant_changes_only: false,
           });
           for (const id of histIds) {
             const unit = hass.states[id]?.attributes?.unit_of_measurement;
             const k = powerIds.has(id) ? POWER_F[unit] ?? 0.001 : id === c.rain_entity ? LENGTH_F[unit] ?? 1 : ENERGY_F[unit] ?? 1;
             series[id] = ((r && r[id]) || [])
+              /* [OLD 2026-10-09 v1.0.4->v1.1.0] Clamped to today's midnight.
               .map((e) => [Math.max(ds, toMs(e.lu ?? e.lc)), num(e.s)])
+              .filter((x) => x[1] !== null && Number.isFinite(x[0]))
+              [/OLD] */
+              .map((e) => [Math.max(fs, toMs(e.lu ?? e.lc)), num(e.s)])
               .filter((x) => x[1] !== null && Number.isFinite(x[0]))
               .map(([t, v]) => [t, v * k]);
           }
@@ -1155,6 +1494,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       this._base = base;
       this._series = series;
       this._statsDay = ds;
+      this._fsK = fsK; // added 2026-10-09 v1.1.0
     })());
 
     // battery SOC and import price history
@@ -1162,14 +1502,22 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     if (histIds.length) {
       jobs.push(
         hass.callWS({
+          /* [OLD 2026-10-09 v1.0.4->v1.1.0] Fetched today only.
           type: "history/history_during_period", start_time: iso(ds), end_time: iso(now),
+          entity_ids: histIds, minimal_response: true, no_attributes: true, significant_changes_only: false,
+          [/OLD] */
+          type: "history/history_during_period", start_time: iso(fs), end_time: iso(now),
           entity_ids: histIds, minimal_response: true, no_attributes: true, significant_changes_only: false,
         })
           .then((r) => {
             const out = {};
             for (const id of histIds)
               out[id] = ((r && r[id]) || [])
+                /* [OLD 2026-10-09 v1.0.4->v1.1.0] Clamped to today's midnight.
                 .map((e) => [Math.max(ds, toMs(e.lu ?? e.lc)), num(e.s)])
+                .filter((p) => p[1] !== null && Number.isFinite(p[0]));
+                [/OLD] */
+                .map((e) => [Math.max(fs, toMs(e.lu ?? e.lc)), num(e.s)])
                 .filter((p) => p[1] !== null && Number.isFinite(p[0]));
             this._hist = out;
             this._histDay = ds;
@@ -1182,14 +1530,21 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     if (c.weather_entity) {
       jobs.push(
         hass.callWS({
+          /* [OLD 2026-10-09 v1.0.4->v1.1.0] Fetched today only.
           type: "history/history_during_period", start_time: iso(ds), end_time: iso(now),
+          entity_ids: [c.weather_entity], minimal_response: false, no_attributes: false, significant_changes_only: false,
+          [/OLD] */
+          type: "history/history_during_period", start_time: iso(fs), end_time: iso(now),
           entity_ids: [c.weather_entity], minimal_response: false, no_attributes: false, significant_changes_only: false,
         })
           .then((r) => {
             let lastA = {};
             this._wxHist = ((r && r[c.weather_entity]) || []).map((e) => {
               if (e.a) lastA = e.a;
+              /* [OLD 2026-10-09 v1.0.4->v1.1.0] Clamped to today's midnight.
               return { t: Math.max(ds, toMs(e.lu ?? e.lc)), s: e.s, a: e.a || lastA };
+              [/OLD] */
+              return { t: Math.max(fs, toMs(e.lu ?? e.lc)), s: e.s, a: e.a || lastA };
             });
           })
           .catch((e) => errors.push(`weather history (${e.message || e.code || e})`))
@@ -1328,6 +1683,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     return { hours: any ? out : null, tomorrow, total: any ? null : total };
   }
   [/OLD] */
+  /* [OLD 2026-10-09 v1.0.4->v1.1.0] Read today's hours only; replaced by the version below that keeps every hour for the sliding timeline.
   _solarForecast(ds) {
     const c = this._config, hass = this._hass;
     let hours = null, tomorrow = null, total = null, source = null;
@@ -1364,6 +1720,72 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     }
     this._fcNote = hours ? null : notes[0] || null;
     return { hours, tomorrow, total: hours ? null : total };
+  }
+  [/OLD] */
+  // v1.1.0: also returns byHour — kWh per hour keyed by hours since today's midnight — for every hour the
+  // sources hold, so the sliding timeline can show yesterday's and tomorrow's forecast. Priority per hour:
+  // today's forecast entity, then tomorrow's forecast entity, then the Energy dashboard forecast.
+  _solarForecast(ds) {
+    const c = this._config, hass = this._hass, tz = this._tz();
+    let tomorrow = null, total = null, source = null;
+    const notes = [], byHour = {};
+    const put = (map, shift) => { for (const [k, v] of Object.entries(map || {})) if (Number.isFinite(v)) byHour[+k + shift] = v; };
+
+    // Energy dashboard forecast (also the fallback for an entity without hourly data)
+    let dashToday = false;
+    if (this._solarFcWs && typeof this._solarFcWs === "object") {
+      const entries = Object.values(this._solarFcWs).filter((x) => x && x.wh_hours);
+      const dash = {};
+      let tmr = null;
+      for (const x of entries) for (const [k, v] of Object.entries(x.wh_hours)) {
+        const i = Math.floor((toMs(k) - ds) / HOUR), kwh = (num(v) ?? 0) / 1000;
+        if (!Number.isFinite(i)) continue;
+        dash[i] = (dash[i] || 0) + kwh;
+        if (i >= 0 && i < 24) dashToday = true;
+        else if (i >= 24 && i < 48) tmr = (tmr || 0) + kwh;
+      }
+      put(dash, 0);
+      tomorrow = tmr;
+      if (dashToday) source = "Energy dashboard";
+      else notes.push(entries.length ? "Energy dashboard forecast has no data for today" : "no forecast is linked to your solar panels in the Energy dashboard");
+    } else if (this._solarFcWsError) notes.push(`Energy dashboard forecast failed: ${this._solarFcWsError}`);
+
+    // tomorrow's forecast entity: its total, and its hours when it carries them (Solcast does)
+    const tEnt = c.solar_forecast_tomorrow_entity && hass.states[c.solar_forecast_tomorrow_entity];
+    if (tEnt) {
+      const dsT = dayStart(ds + 36 * HOUR, tz);
+      const r = readForecastAttributes(tEnt.attributes || {}, dsT, energyKWh(tEnt));
+      if (r.byHour) put(r.byHour, Math.round((dsT - ds) / HOUR));
+    }
+
+    // today's forecast entity wins wherever it has hours
+    const e = c.solar_forecast_entity && hass.states[c.solar_forecast_entity];
+    if (c.solar_forecast_entity && !e) notes.push(`${c.solar_forecast_entity} not found`);
+    if (e) {
+      const r = readForecastAttributes(e.attributes || {}, ds, energyKWh(e));
+      if (r.hours) {
+        put(r.byHour, 0);
+        if (r.tomorrow != null) tomorrow = r.tomorrow;
+        source = `${c.solar_forecast_entity} → ${r.label}`;
+      } else {
+        notes.push(`${c.solar_forecast_entity}: ${r.note}`);
+        if (!dashToday) total = energyKWh(e);
+      }
+    }
+    if (tEnt) { const v = energyKWh(tEnt); if (v !== null) tomorrow = v; }
+
+    const hours = Array(24).fill(0);
+    let any = false;
+    for (let i = 0; i < 24; i++) if (byHour[i] != null) { hours[i] = byHour[i]; any = true; }
+
+    // one console line whenever the outcome changes
+    const diag = any ? `today's forecast from ${source}` : `no hourly solar forecast for today — ${notes.join("; ")}`;
+    if (diag !== this._fcDiag) {
+      this._fcDiag = diag;
+      (any ? console.info : console.warn)(`${CARD_TAG} v${CARD_VERSION}: ${diag}`);
+    }
+    this._fcNote = any ? null : notes[0] || null;
+    return { hours: any ? hours : null, tomorrow, total: any ? null : total, byHour: Object.keys(byHour).length ? byHour : null };
   }
 
   /* ---------- formatting ---------- */
@@ -1432,6 +1854,21 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     catch (e) { return String(rate); }
   }
   _kwh(v) { return `${(v ?? 0).toFixed(1)} kWh`; }
+  // added 2026-10-09 v1.1.0: duration text for the battery tile, e.g. "3 h 20 min"
+  _dur(hours) {
+    const mins = Math.max(1, Math.round(hours * 60));
+    const h = Math.floor(mins / 60), mi = mins % 60;
+    return h ? (mi ? `${h} h ${mi} min` : `${h} h`) : `${mi} min`;
+  }
+  // added 2026-10-09 v1.1.0: timeline length in hours (24, 36 or 48; anything 12-72 works in YAML)
+  _span() {
+    const v = num(this._config?.timeline_hours);
+    return v !== null && v >= 12 && v <= 72 ? Math.round(v) : 24;
+  }
+  // added 2026-10-09 v1.1.0: first hour to fetch, counted from today's midnight (never later than midnight)
+  _fetchStartK(now, ds) {
+    return Math.min(0, Math.floor((now - ds) / HOUR - this._span() / 2) - 1);
+  }
   _power(kw) {
     const a = Math.abs(kw);
     return a < 1 ? `${Math.round(a * 1000)} W` : `${a.toFixed(1)} kW`;
@@ -1439,6 +1876,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
 
   /* ---------- model ---------- */
 
+  /* [OLD 2026-10-09 v1.0.4->v1.1.0] Fixed midnight-to-midnight day; replaced by the sliding-window model below. Also fed the wind row. (inner comment ends written as *\/)
   _model(W) {
     const hass = this._hass, c = this._config;
     const tz = this._tz(), now = Date.now(), ds = dayStart(now, tz);
@@ -1456,7 +1894,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       arr[nh] = part;
       return arr;
     };
-    [/OLD] */
+    [/OLD] *\/
     const flowNotes = [];
     const flowOf = (key) => {
       const f = this._flowDefs().find((x) => x.key === key);
@@ -1536,7 +1974,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     m.home = hoursOf(c.home_energy_entity, energyKWh);
     m.imp = hoursOf(c.grid_import_entity, energyKWh);
     m.exp = hoursOf(c.grid_export_entity, energyKWh);
-    [/OLD] */
+    [/OLD] *\/
     m.solar = flowOf("solar");
     m.home = flowOf("home");
     m.imp = flowOf("imp");
@@ -1699,6 +2137,364 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     }
     return m;
   }
+  [/OLD] */
+  // v1.1.0: the timeline is a sliding window centred on now. Hours are counted from today's midnight
+  // (negative = yesterday, 24 and up = tomorrow); window arrays start at hour k0. Tiles stay "today".
+  _model(W) {
+    const hass = this._hass, c = this._config;
+    const tz = this._tz(), now = Date.now(), ds = dayStart(now, tz);
+    const kNow = (now - ds) / HOUR, nh = Math.floor(kNow), frac = kNow - nh;
+    const span = this._span(), wStart = kNow - span / 2, wEnd = kNow + span / 2;
+    const k0 = Math.floor(wStart) - 1, k1 = Math.ceil(wEnd); // one spare hour each side, clipped when drawn
+    const n = k1 - k0 + 1, jNow = nh - k0;
+    const inWin = (h) => h >= wStart && h <= wEnd;
+    const S = (id) => (id ? hass.states[id] : undefined);
+    const statsReady = this._statsDay === ds;
+    const fsK = this._fsK || 0, fs = ds + fsK * HOUR, nI = nh - fsK; // fetched range: hour fsK .. nh
+    const iwM = Math.max(60, W - 30 - (c.battery_soc_entity ? 40 : 14)); // plot width, same as chartSvg
+    const pph = iwM / span; // pixels per hour
+
+    // energy flows over the fetched range (statistics → history → integrated power), as in v1.0.3
+    const flowNotes = [];
+    const flowOf = (key) => {
+      const f = this._flowDefs().find((x) => x.key === key);
+      if (!f || (!f.energy && !f.power) || !statsReady) return null;
+      let arr = null, src = "", why = "";
+      const est = f.energy ? S(f.energy) : null;
+      if (f.energy && !est) why = `${f.energy} not found`;
+      if (f.energy && this._stats[f.energy]) {
+        arr = this._stats[f.energy].slice();
+        const b = this._base[f.energy] || { change: 0, state: null };
+        const live = f.conv(est);
+        let part = b.change || 0;
+        if (b.state != null && live != null && live >= b.state) part += live - b.state;
+        arr[nI] = part;
+        src = `statistics of ${f.energy}`;
+      } else if (f.energy && this._series[f.energy]?.length) {
+        arr = cumulativeHours(this._series[f.energy], f.conv(est), fs, now, nI);
+        const sc = est?.attributes?.state_class;
+        src = `recorder history of ${f.energy} (it has no long-term statistics; state_class is ${sc ? `"${sc}"` : "not set"})`;
+      } else if (f.energy && est) {
+        why = `${f.energy} has no statistics and no history for today`;
+      }
+      if (f.power && this._series[f.power]?.length && (!arr || sum(arr) < 0.01)) {
+        const pst = S(f.power);
+        const live = pst ? [Math.max(toMs(pst.last_updated) || now, 0), powerKW(pst)] : null;
+        const p = integratePower(this._series[f.power], live, f.sign, fs, now, nI);
+        if (!arr || sum(p) > 0.05) {
+          if (arr) why = `${f.energy} shows no change today`;
+          src = `${f.power}, integrated over time${why ? ` (${why})` : ""}`;
+          arr = p;
+        }
+      }
+      const diag = arr ? `${f.label} from ${src}` : `${f.label}: no data${why ? ` — ${why}` : ""}`;
+      if (this._flowDiag[key] !== diag) {
+        this._flowDiag[key] = diag;
+        (arr ? console.info : console.warn)(`${CARD_TAG} v${CARD_VERSION}: ${diag}`);
+      }
+      if (!arr) flowNotes.push(f.label);
+      return arr;
+    };
+    // fetched-range array → window array (actuals only up to the running hour)
+    const win = (arr) => {
+      if (!arr) return null;
+      const out = Array(n).fill(null);
+      for (let j = 0; j < n; j++) {
+        const k = k0 + j, i = k - fsK;
+        if (k <= nh && i >= 0 && i < arr.length) out[j] = arr[i];
+      }
+      return out;
+    };
+    // fetched-range array → today's hours 0..nh
+    const today = (arr) => (arr ? arr.slice(-fsK, nI + 1) : null);
+
+    const m = {
+      uid: this._uid, span, wStart, k0, jNow, frac, now: kNow, nh,
+      showHum: c.show_humidity !== false,
+      nowLabel: `Now ${this._fmtHM(now)}`,
+      rateLabel: (s) => {
+        const r = this._rateText(s.rate);
+        if (s.label) return r ? `${r} ${s.label}` : s.label;
+        if (s.type === "off_peak") return r ? `${r} off-peak` : "off-peak";
+        if (s.type === "peak") return r ? `${r} peak` : "peak";
+        return r;
+      },
+    };
+
+    // day boundaries (two days either side covers a 48-hour window), hour ticks
+    const dayStarts = [];
+    for (let d = -2; d <= 3; d++) dayStarts.push(dayStart(ds + d * 24 * HOUR + 12 * HOUR, tz));
+    m.days = dayStarts.map((t) => (t - ds) / HOUR).filter((h) => h > wStart && h < wEnd);
+    const tickStep = [2, 3, 4, 6, 8, 12].find((s) => s * pph >= 72) || 12;
+    m.ticks = [];
+    for (let k = Math.ceil(wStart); k <= Math.floor(wEnd); k++) {
+      const t = ds + k * HOUR, p = tzParts(t, tz);
+      if (p.h % tickStep) continue;
+      m.ticks.push({ h: k, day: p.h === 0, label: p.h === 0 ? this._fmt("wd", { weekday: "short" }).format(t) : this._hourLabel(p.h) });
+    }
+
+    // sun: nights between each sunset and the next sunrise, and every sunrise/sunset in view
+    m.nights = [];
+    m.sunMarks = [];
+    const lat = num(hass.config?.latitude), lon = num(hass.config?.longitude);
+    if (lat !== null && lon !== null) {
+      const suns = dayStarts.map((t) => sunTimes(t, lat, lon));
+      for (let i = 0; i < suns.length - 1; i++)
+        if (suns[i] && suns[i + 1]) m.nights.push([(suns[i].set - ds) / HOUR, (suns[i + 1].rise - ds) / HOUR]);
+      for (const st of suns) {
+        if (!st) continue;
+        const a = (st.rise - ds) / HOUR, b = (st.set - ds) / HOUR;
+        if (inWin(a)) m.sunMarks.push({ h: a, kind: "rise", label: this._fmtHM(st.rise) });
+        if (inWin(b)) m.sunMarks.push({ h: b, kind: "set", label: this._fmtHM(st.set) });
+      }
+    }
+    const isNight = (h) => m.nights.some(([a, b]) => h > a && h < b);
+
+    // energy
+    const solarF = flowOf("solar"), homeF = flowOf("home"), impF = flowOf("imp"), expF = flowOf("exp");
+    m.solar = win(solarF);
+    m.home = win(homeF);
+    m.imp = win(impF);
+    m.exp = win(expF);
+    m.flowNotes = flowNotes;
+    const dSolar = today(solarF), dHome = today(homeF), dImp = today(impF), dExp = today(expF);
+
+    // solar forecast: every hour the sources hold, so yesterday and tomorrow show where available
+    const sf = this._solarForecast(ds);
+    if (sf.byHour) {
+      const fcw = Array(n).fill(null);
+      let any = false;
+      for (let j = 0; j < n; j++) { const v = sf.byHour[k0 + j]; if (v != null) { fcw[j] = v; any = true; } }
+      m.solarFc = any ? fcw : null;
+    }
+    m.tomorrow = sf.tomorrow;
+    m.fcTotalOnly = sf.total;
+    if (sf.hours) {
+      m.fcToday = sum(sf.hours);
+      m.fcLeft = (sf.hours[nh] || 0) * (1 - frac) + sum(sf.hours.slice(nh + 1));
+    } else if (m.solarFc) { m.fcToday = 0; m.fcLeft = 0; }
+
+    // battery
+    if (c.battery_soc_entity) {
+      const live = num(S(c.battery_soc_entity)?.state);
+      m.socNow = live;
+      const raw = this._histDay === ds ? this._hist[c.battery_soc_entity] || [] : [];
+      const pts = [];
+      let lastBucket = null, before = null;
+      for (const [t, v] of raw) {
+        const h = (t - ds) / HOUR;
+        if (h < k0) { before = v; continue; } // the value carried into the window
+        if (h > kNow) continue;
+        const bk = Math.floor(h * 10); // 6-minute buckets
+        if (bk === lastBucket) pts[pts.length - 1] = [h, v];
+        else { pts.push([h, v]); lastBucket = bk; }
+      }
+      if (before !== null && (!pts.length || pts[0][0] > k0)) pts.unshift([k0, before]);
+      if (live !== null) pts.push([kNow, live]);
+      m.soc = pts;
+      const resEnt = num(S(c.battery_reserve_entity)?.state);
+      m.reserve = resEnt !== null ? resEnt : num(c.battery_reserve);
+      // when did it last become full?
+      const series = raw.concat(live !== null ? [[now, live]] : []);
+      if (series.length && series[series.length - 1][1] >= 99.5) {
+        let i = series.length - 1;
+        while (i > 0 && series[i - 1][1] >= 99.5) i--;
+        m.fullSince = i > 0 ? series[i][0] : null;
+      }
+    }
+
+    // weather: history before the running hour, the live state for it, the hourly forecast after it
+    const wx = S(c.weather_entity);
+    const fcByHour = {};
+    for (const f of this._forecast || []) {
+      const i = Math.floor((toMs(f.datetime) - ds) / HOUR);
+      if (i >= nh && i <= k1 && !(i in fcByHour)) fcByHour[i] = f;
+    }
+    const histAt = (t) => {
+      let r = null;
+      for (const e of this._wxHist) { if (e.t <= t) r = e; else break; }
+      return r;
+    };
+    if (wx) {
+      const pick = (src) => src && { cond: src.cond, temp: num(src.temp), hum: num(src.hum), uv: num(src.uv) };
+      const at = (hi) => {
+        if (hi < nh) {
+          const e = histAt(ds + (hi + 0.5) * HOUR);
+          return e ? pick({ cond: e.s, temp: e.a.temperature, hum: e.a.humidity, uv: e.a.uv_index }) : null;
+        }
+        if (hi === nh) {
+          const a = wx.attributes || {};
+          return pick({ cond: wx.state, temp: a.temperature, hum: a.humidity, uv: a.uv_index });
+        }
+        const f = fcByHour[hi];
+        return f ? pick({ cond: f.condition, temp: f.temperature, hum: f.humidity, uv: f.uv_index }) : null;
+      };
+      const step = [1, 2, 3, 4, 6].find((s) => s * pph >= 38) || 6;
+      m.slots = [];
+      for (let k = Math.floor(wStart) - step; k <= wEnd; k++) {
+        if (tzParts(ds + k * HOUR, tz).h % step) continue;
+        const center = k + step / 2;
+        if (center < wStart + 0.25 || center > wEnd - 0.25) continue;
+        const hi = Math.floor(center);
+        const d = at(hi);
+        if (!d || !d.cond) continue;
+        m.slots.push({
+          h: center, cond: d.cond, night: isNight(hi + 0.5),
+          temp: d.temp !== null ? `${Math.round(d.temp)}°` : null,
+          uv: d.uv !== null && d.uv >= 1 ? `UV ${Math.round(d.uv)}` : null,
+          hum: d.hum,
+        });
+      }
+      const a = wx.attributes || {};
+      m.cur = {
+        cond: wx.state,
+        condText: hass.formatEntityState ? hass.formatEntityState(wx) : wx.state,
+        temp: num(a.temperature), tUnit: a.temperature_unit || "°",
+        hum: num(a.humidity),
+        ws: num(a.wind_speed), wsUnit: a.wind_speed_unit || "km/h", wb: bearingDeg(a.wind_bearing),
+        night: isNight(kNow),
+      };
+      if (c.show_storm_alert !== false) m.storm = this._storm(wx, now, ds);
+    }
+
+    // rain lane: gauge for past hours, forecast for the rest
+    if (c.show_rain !== false && (wx || c.rain_entity)) {
+      const rainW = c.rain_entity ? win(flowOf("rain")) : null;
+      const pf = LENGTH_F[wx?.attributes?.precipitation_unit] ?? 1;
+      const mm = Array(n).fill(null), prob = Array(n).fill(null);
+      for (let j = 0; j < n; j++) {
+        const k = k0 + j;
+        if (rainW && k <= nh && rainW[j] != null) mm[j] = rainW[j];
+        const f = fcByHour[k];
+        if (f) {
+          if (!(rainW && k <= nh) && num(f.precipitation) !== null) mm[j] = num(f.precipitation) * pf;
+          if (num(f.precipitation_probability) !== null) prob[j] = num(f.precipitation_probability);
+        }
+      }
+      m.rainMm = mm;
+      m.rainProb = prob;
+    }
+
+    // tariffs: the daily schedule repeated over every day in view; neighbours with the same rate merge.
+    // Clock times are placed by local time, so a 23- or 25-hour day (clock change) stays right.
+    const atClock = (dsd, hod) => {
+      if (hod >= 24) return (dayStart(dsd + 36 * HOUR, tz) - ds) / HOUR;
+      const t = dsd + hod * HOUR;
+      return (t - (tzOffset(t, tz) - tzOffset(dsd, tz)) - ds) / HOUR;
+    };
+    const clockOf = (k) => { const p = tzParts(ds + k * HOUR, tz); return p.h + p.mi / 60; }; // hour of day at hour k
+    const spread = (segs) => {
+      const out = [];
+      for (const t of dayStarts) {
+        for (const s of segs) {
+          const a = atClock(t, s.a), b = atClock(t, s.b);
+          if (b <= wStart || a >= wEnd) continue;
+          const prev = out[out.length - 1];
+          if (prev && Math.abs(prev.b - a) < 0.01 && prev.type === s.type && prev.rate === s.rate && prev.label === s.label) prev.b = b;
+          else out.push({ ...s, a, b });
+        }
+      }
+      return out;
+    };
+    const stdRate = num(c.standard_rate);
+    if (this._tariff.length) {
+      const segs = tariffSegments(this._tariff, stdRate);
+      if (c.show_tariff !== false) m.tariff = spread(segs);
+      m.rateAt = (k) => { const h = clockOf(k), s = segs.find((x) => h >= x.a && h < x.b); return s && s.rate != null ? s.rate : stdRate; };
+    } else if (c.import_rate_entity) {
+      const st = S(c.import_rate_entity);
+      const unit = String(st?.attributes?.unit_of_measurement || "");
+      const fct = /^(p|c|¢|cent)/i.test(unit) ? 0.01 : 1;
+      const raw = this._histDay === ds ? this._hist[c.import_rate_entity] || [] : [];
+      const liveR = num(st?.state);
+      m.rateAt = (h) => {
+        const t = ds + h * HOUR;
+        if (h >= nh && liveR !== null) return liveR * fct;
+        let r = null;
+        for (const [ts, v] of raw) { if (ts <= t) r = v; else break; }
+        return r !== null ? r * fct : liveR !== null ? liveR * fct : null;
+      };
+    } else if (stdRate !== null) {
+      m.rateAt = () => stdRate;
+    }
+    const expRate = num(c.export_rate);
+    if (this._expTariff.length) {
+      const segs = tariffSegments(this._expTariff, expRate);
+      if (c.show_tariff !== false) m.expTariff = spread(segs);
+      m.expRateAt = (k) => { const h = clockOf(k), s = segs.find((x) => h >= x.a && h < x.b); return s && s.rate != null ? s.rate : expRate; };
+    } else if (expRate !== null) {
+      m.expRateAt = () => expRate;
+    }
+
+    // tile numbers (today, midnight to now)
+    m.solarNow = powerKW(S(c.solar_power_entity));
+    m.homeNow = powerKW(S(c.home_power_entity));
+    m.gridNow = powerKW(S(c.grid_power_entity), !!c.grid_power_invert);
+    m.battNow = powerKW(S(c.battery_power_entity), !!c.battery_power_invert);
+    if (dSolar) { m.solarToday = sum(dSolar); m.solarBest = argmax(dSolar); m.solarBestKwh = m.solarBest >= 0 ? dSolar[m.solarBest] : 0; }
+    if (dHome) { m.homeToday = sum(dHome); m.homeBusiest = argmax(dHome); m.homeBusiestKwh = m.homeBusiest >= 0 ? dHome[m.homeBusiest] : 0; }
+    if (dImp) m.impToday = sum(dImp);
+    if (dExp) m.expToday = sum(dExp);
+    if ((dImp && m.rateAt) || (dExp && m.expRateAt)) {
+      let ci = 0, ce = 0, okI = false, okE = false;
+      for (let h = 0; h <= nh; h++) {
+        const r = dImp && m.rateAt ? m.rateAt(h + 0.5) : null;
+        if (r != null && dImp[h] != null) { ci += dImp[h] * r; okI = true; }
+        const er = dExp && m.expRateAt ? m.expRateAt(h + 0.5) : null;
+        if (er != null && dExp[h] != null) { ce += dExp[h] * er; okE = true; }
+      }
+      if (okI || okE) m.cost = { imp: okI ? ci : null, exp: okE ? ce : null, net: ci - ce };
+    }
+    if (dHome && dImp && m.homeToday > 0) {
+      let fromGrid = 0;
+      for (let h = 0; h <= nh; h++) fromGrid += Math.min(dImp[h] || 0, dHome[h] || 0);
+      m.selfPowered = Math.max(0, 1 - fromGrid / m.homeToday);
+    }
+    return m;
+  }
+
+  // added 2026-10-09 v1.1.0: storms in the next STORM_AHEAD_H hours of the hourly forecast (and right now)
+  _storm(wx, now, ds) {
+    const a = wx.attributes || {};
+    const unit = a.wind_speed_unit || "km/h", toKmh = WIND_KMH[unit] ?? 1;
+    const hits = [];
+    let maxGust = null;
+    const check = (t, cond, gust, wind) => {
+      const kinds = [];
+      if (cond === "lightning" || cond === "lightning-rainy") kinds.push("Thunderstorm");
+      if (cond === "hail") kinds.push("Hail");
+      if (cond === "exceptional") kinds.push("Severe weather");
+      const g = num(gust), w = num(wind);
+      if ((g !== null && g * toKmh >= STORM_GUST_KMH) || (w !== null && w * toKmh >= STORM_WIND_KMH)) {
+        kinds.push("Storm-force wind");
+        const v = g !== null ? g : w;
+        if (maxGust === null || v > maxGust) maxGust = v;
+      }
+      if (kinds.length) hits.push({ t, kinds });
+    };
+    check(now, wx.state, a.wind_gust_speed, a.wind_speed);
+    for (const f of this._forecast || []) {
+      const t = toMs(f.datetime);
+      if (!(t > now - HOUR && t <= now + STORM_AHEAD_H * HOUR)) continue;
+      check(Math.max(t, now), f.condition, f.wind_gust_speed, f.wind_speed);
+    }
+    if (!hits.length) return null;
+    hits.sort((x, y) => x.t - y.t);
+    const kinds = [...new Set(hits.flatMap((h) => h.kinds))];
+    let title = kinds.map((k, i) => (i ? k.toLowerCase() : k)).join(", ");
+    if (maxGust !== null) title += ` · gusts ${Math.round(maxGust)} ${unit}`;
+    const t0 = hits[0].t, t1 = Math.floor(hits[hits.length - 1].t / HOUR) * HOUR + HOUR;
+    const when = t0 <= now + 5 * 60000 ? `now until ${this._fmtWhen(t1)}` : `${this._fmtWhen(t0)} – ${this._fmtWhen(t1)}`;
+    // hour spans for the red strip on the timeline
+    const spans = [];
+    for (const h of hits) {
+      const a0 = (h.t - ds) / HOUR, b0 = Math.floor(a0) + 1;
+      const last = spans[spans.length - 1];
+      if (last && a0 <= last[1] + 0.01) last[1] = Math.max(last[1], b0);
+      else spans.push([a0, b0]);
+    }
+    return { title, when, spans };
+  }
 
   /* ---------- rendering ---------- */
 
@@ -1747,6 +2543,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const out = [this._clockHtml(m)];
     const w = this._warning();
     if (w) out.push(this._warningHtml(w));
+    if (m.storm) out.push(this._stormHtml(m.storm)); // added 2026-10-09 v1.1.0
 
     const anyData = m.solar || m.solarFc || m.home || m.imp || m.exp || m.soc || m.slots;
     if (anyData) out.push(`<div class="chart">${chartSvg(W, m).svg}</div>`);
@@ -1816,6 +2613,14 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     </div>`;
   }
 
+  // added 2026-10-09 v1.1.0: red storm alert label
+  _stormHtml(st) {
+    return `<div class="storm" role="alert">
+      <svg width="14" height="16" viewBox="0 0 14 16" aria-hidden="true"><path d="M8.5,0.5L1.5,9h4.2l-1.6,6.5L12.5,6.5H8.2l1.8-6z"/></svg>
+      <span class="s-title">${esc(st.title)}</span><span>${esc(st.when)}</span>
+    </div>`;
+  }
+
   _tile(sw, label, value, s1, s2, valueHtml) {
     return `<div class="tile">
       <div class="tl">${sw}<span>${esc(label)}</span></div>
@@ -1832,7 +2637,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     if (m.solar) {
       t.push(this._tile(SW.solar, "Solar", this._kwh(m.solarToday),
         m.solarNow !== null ? `${this._power(m.solarNow)} now` : "",
+        /* [OLD 2026-10-09 v1.0.4->v1.1.0] m.solar is now the timeline window, not today's hours.
         m.solarBest >= 0 && m.solar[m.solarBest] > 0 ? `Best hour ${at(m.solarBest)} · ${m.solar[m.solarBest].toFixed(1)} kWh` : ""));
+        [/OLD] */
+        m.solarBest >= 0 && m.solarBestKwh > 0 ? `Best hour ${at(m.solarBest)} · ${m.solarBestKwh.toFixed(1)} kWh` : ""));
     }
     /* [OLD 2026-10-09] Showed an unexplained "—" when there was no hourly forecast for today.
     if (m.solarFc || m.tomorrow != null) {
@@ -1853,7 +2661,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     if (m.home || m.homeNow !== null) {
       t.push(this._tile(SW.home, "Home", m.home ? this._kwh(m.homeToday) : "—",
         m.homeNow !== null ? `${this._power(m.homeNow)} now` : "",
+        /* [OLD 2026-10-09 v1.0.4->v1.1.0] m.home is now the timeline window, not today's hours.
         m.home && m.homeBusiest >= 0 && m.home[m.homeBusiest] > 0 ? `Busiest hour ${at(m.homeBusiest)}` : ""));
+        [/OLD] */
+        m.home && m.homeBusiest >= 0 && m.homeBusiestKwh > 0 ? `Busiest hour ${at(m.homeBusiest)}` : ""));
     }
     if (m.imp || m.exp || m.gridNow !== null) {
       let now = "";
@@ -1861,6 +2672,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       t.push(this._tile(`${SW.grid}${m.exp ? SW.exp : ""}`, "Grid", m.imp ? `${m.impToday.toFixed(1)} kWh in` : "—",
         m.exp ? `${m.expToday.toFixed(1)} kWh exported` : "", now));
     }
+    /* [OLD 2026-10-09 v1.0.4->v1.1.0] Battery tile gave only 'Full ≈' / 'reserve ≈' clock times while charging or discharging; cost tile showed 'in · out' without saying which was income.
     if (m.socNow != null) {
       const soc = Math.max(0, Math.min(100, m.socNow));
       const res = m.reserve;
@@ -1888,6 +2700,50 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     } else if (m.selfPowered != null) {
       t.push(this._tile(SW.cost, "Self-powered", `${Math.round(m.selfPowered * 100)}%`, "of home use from solar and battery", ""));
     }
+    [/OLD] */
+    // v1.1.0: the battery tile shows the time left — to the reserve while discharging, to full while charging,
+    // and at the current home use while idle or full; the money tile splits import cost and export income
+    if (m.socNow != null) {
+      const soc = Math.max(0, Math.min(100, m.socNow));
+      const res = m.reserve;
+      const floor = res != null ? res : 0;
+      const cap = num(c.battery_capacity);
+      const bp = m.battNow;
+      const flow = bp !== null && Math.abs(bp) > 0.1 ? bp : 0;
+      let status = "", est = res != null ? `Reserve ${Math.round(res)}%` : "";
+      const left = (hours) => this._dur(hours);
+      const clock = (hours) => this._fmtWhen(Date.now() + hours * HOUR);
+      if (soc >= 99.5 && (bp === null || Math.abs(bp) < 0.25)) status = m.fullSince ? `Full since ${this._fmtWhen(m.fullSince)}` : "Full";
+      else if (flow < 0) status = `Charging ${this._power(bp)}`;
+      else if (flow > 0) status = `Discharging ${this._power(bp)}`;
+      else status = bp !== null ? "Idle" : "";
+      if (cap) {
+        if (flow < 0 && soc < 99.5) {
+          const h = (((100 - soc) / 100) * cap) / -flow;
+          est = h >= 48 ? "Full in 2+ days" : `Full in ${left(h)} · ${clock(h)}`;
+        } else if (flow > 0 && soc > floor) {
+          const h = (((soc - floor) / 100) * cap) / flow;
+          est = h >= 48 ? "2+ days left" : `${left(h)} left · ${clock(h)}`;
+        } else if (flow === 0 && m.homeNow !== null && m.homeNow > 0.05 && soc > floor) {
+          const h = (((soc - floor) / 100) * cap) / m.homeNow;
+          est = h >= 48 ? "Lasts 2+ days at current use" : `Lasts ${left(h)} at current use`;
+        }
+      }
+      const valueHtml = `<div class="row"><span class="tv">${Math.round(soc)}%</span>
+        <div class="bar"><div class="fill" style="width:${soc}%"></div>${res != null ? `<div class="tick" style="left:${Math.max(0, Math.min(100, res))}%"></div>` : ""}</div></div>`;
+      t.push(this._tile(SW.soc, c.battery_name || "Battery", "", status, est, valueHtml));
+    }
+    if (m.cost) {
+      const earn = m.cost.net < -0.005;
+      const parts = [];
+      if (m.cost.imp != null) parts.push(`${this._money(m.cost.imp)} cost`);
+      if (m.cost.exp != null) parts.push(`${this._money(m.cost.exp)} income`);
+      const valueHtml = `<div class="tv${earn ? " earn" : ""}">${esc(this._money(Math.abs(m.cost.net)))}</div>`;
+      t.push(this._tile(SW.cost, earn ? "Today's earnings" : "Today's cost", "", parts.join(" · "),
+        m.selfPowered != null ? `${Math.round(m.selfPowered * 100)}% self-powered` : "", valueHtml));
+    } else if (m.selfPowered != null) {
+      t.push(this._tile(SW.cost, "Self-powered", `${Math.round(m.selfPowered * 100)}%`, "of home use from solar and battery", ""));
+    }
     return t.length ? `<div class="tiles">${t.join("")}</div>` : "";
   }
 }
@@ -1902,7 +2758,10 @@ if (!window.customCards.some((c) => c.type === CARD_TAG)) {
     /* [OLD 2026-10-09 v1.0.1->v1.0.2] Description had no version.
     description: "Clock, hourly weather and today's solar, home, grid and battery on one 24-hour timeline.",
     [/OLD] */
+    /* [OLD 2026-10-09 v1.0.4->v1.1.0] Described the old fixed 24-hour day.
     description: `Clock, hourly weather and today's solar, home, grid and battery on one 24-hour timeline. v${CARD_VERSION}`,
+    [/OLD] */
+    description: `Clock, hourly weather, solar, home, grid and battery on one sliding timeline with now in the centre. v${CARD_VERSION}`,
     preview: true,
   });
 }

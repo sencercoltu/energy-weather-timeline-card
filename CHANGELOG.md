@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.6.0
+- One battery colour scale everywhere: red up to the backup reserve, yellow up to 50 % (was 60 %), green from 80 %, blended in between.
+- Battery tile: the total charge bar is now one solid colour from that scale, like each battery's line.
+- Graph: the charge line and its shaded area follow the scale by level, the dot at now takes the colour of the current charge, and the reserve line and its label are red.
+
 ## v1.5.2
 - Battery tile: each battery's line is now one solid colour, the colour the red / yellow / green scale has at that battery's own charge. The total bar keeps the blended scale.
 

@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.5.1
+- Fixed: just after midnight, a daily energy meter (one that resets to zero each day) read as no energy for the running hour, so grid import showed 0 and self-powered showed 100 %. The running hour now counts from zero after a reset.
+
 ## v1.5.0
 - Battery tile: optional state of charge for each battery (main first, then expansions), drawn as thin lines with their percentages under the total charge bar. The bar and the lines share one colour scale: red up to the backup reserve, yellow to 60 %, green to 100 %, blended. The reserve mark runs through all of them.
 - The Now label is slightly see-through, and a sunrise or sunset close to now moves beside it instead of being hidden.

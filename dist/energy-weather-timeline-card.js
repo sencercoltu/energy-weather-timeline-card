@@ -48,7 +48,10 @@ const CARD_VERSION = "1.5.0";
 /* [OLD 2026-10-10 v1.5.1->v1.5.2] Version bump for single-colour battery lines.
 const CARD_VERSION = "1.5.1";
 [/OLD] */
+/* [OLD 2026-10-10 v1.5.2->v1.6.0] Version bump for one battery colour scale on the tile and the graph, yellow up to 50 %.
 const CARD_VERSION = "1.5.2";
+[/OLD] */
+const CARD_VERSION = "1.6.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -520,9 +523,20 @@ const unitSocIds = (c) => (Array.isArray(c.battery_unit_soc_entities) ? c.batter
 // added 2026-10-10 v1.5.2: the colour the battery scale has at a charge level — the same stops as the bar's gradient: red up to
 // the backup reserve, then yellow from reserve + 8 % (at most 60 %) to 60 %, then green from 76 %, blended in between
 const SOC_RED = [0xE5, 0x39, 0x35], SOC_YELLOW = [0xFB, 0xC0, 0x2D], SOC_GREEN = [0x4D, 0xD0, 0xA1];
+// added 2026-10-10 v1.6.0: the battery scale's stops as [charge %, colour]: red up to the backup reserve, yellow from reserve + 8 %
+// (at most 50 %) up to 50 %, green from 80 %, blended in between. Positions never go backwards (as in CSS and SVG).
+function socStops(reserve) {
+  const r = Math.max(0, Math.min(100, reserve || 0));
+  const raw = [[0, SOC_RED], [r, SOC_RED], [Math.min(50, r + 8), SOC_YELLOW], [50, SOC_YELLOW], [80, SOC_GREEN], [100, SOC_GREEN]];
+  let last = 0;
+  return raw.map(([p, c]) => [(last = Math.max(last, p)), c]);
+}
 function socColour(v, reserve) {
+  /* [OLD 2026-10-10 v1.5.2->v1.6.0] Yellow to 60 %, green from 76 %, and the stops lived only here.
   const r = Math.max(0, Math.min(100, reserve || 0));
   const stops = [[0, SOC_RED], [r, SOC_RED], [Math.min(60, r + 8), SOC_YELLOW], [60, SOC_YELLOW], [76, SOC_GREEN], [100, SOC_GREEN]];
+  [/OLD] */
+  const stops = socStops(reserve); // v1.6.0: shared with the graph's gradient
   let [p0, c0] = stops[0];
   for (let i = 1; i < stops.length; i++) {
     const p1 = Math.max(stops[i][0], p0), c1 = stops[i][1]; // like CSS, a stop never sits before the one ahead of it
@@ -832,9 +846,18 @@ function chartSvg(W, m) {
       let d = "";
       m.soc.forEach((p, i) => { d += `${i ? "L" : "M"}${f(X(p[0]))},${f(YS(p[1]))}`; });
       const first = m.soc[0], last = m.soc[m.soc.length - 1];
+      /* [OLD 2026-10-10 v1.5.2->v1.6.0] Line and area were always green.
       G.push(`<path class="soc-a" d="${d}L${f(X(last[0]))},${f(zero)}L${f(X(first[0]))},${f(zero)}Z"/>`);
       if (m.reserve != null) G.push(`<path class="res" d="M${L},${f(YS(m.reserve))}H${f(right)}"/>`);
       G.push(`<path class="soc-l" d="${d}"/>`);
+      [/OLD] */
+      // v1.6.0: line and area take the battery scale as a vertical gradient (the colour follows the charge level)
+      const gid = `${m.uid || "ewt"}-soc`;
+      const stops = socStops(m.reserve).map(([p, c]) => `<stop offset="${r1(p / 100)}" stop-color="rgb(${c.join(",")})"/>`).join("");
+      G.push(`<defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="0" y1="${f(YS(0))}" x2="0" y2="${f(YS(100))}">${stops}</linearGradient></defs>`);
+      G.push(`<path class="soc-a" style="fill:url(#${gid})" d="${d}L${f(X(last[0]))},${f(zero)}L${f(X(first[0]))},${f(zero)}Z"/>`);
+      if (m.reserve != null) G.push(`<path class="res" d="M${L},${f(YS(m.reserve))}H${f(right)}"/>`);
+      G.push(`<path class="soc-l" style="stroke:url(#${gid})" d="${d}"/>`);
     } else if (m.reserve != null) {
       G.push(`<path class="res" d="M${L},${f(YS(m.reserve))}H${f(right)}"/>`);
     }
@@ -932,7 +955,10 @@ function chartSvg(W, m) {
 
   // now line + battery dot
   G.push(`<path class="nowl" d="M${f(nowX)},20V${H}"/>`);
+  /* [OLD 2026-10-10 v1.5.2->v1.6.0] The dot was always green.
   if (m.soc && m.socNow != null) G.push(`<circle class="soc-d" cx="${f(nowX)}" cy="${f(YS(m.socNow))}" r="4"/>`);
+  [/OLD] */
+  if (m.soc && m.socNow != null) G.push(`<circle class="soc-d" style="fill:${socColour(m.socNow, m.reserve)}" cx="${f(nowX)}" cy="${f(YS(m.socNow))}" r="4"/>`); // v1.6.0: dot in the scale's colour
 
   // weather lane and humidity row
   if (hasWx) {
@@ -964,7 +990,10 @@ function chartSvg(W, m) {
   for (const v of kt) P.push(`<text class="t11" x="${L - 6}" y="${f(Y(v) + 4)}" text-anchor="end">${fmtTick(big ? v / 1000 : v)}</text>`);
   if (m.soc) {
     for (const p of [100, 50, 0]) P.push(`<text class="soc-t" x="${f(right + 6)}" y="${f(YS(p) + 4)}">${p}%</text>`);
+    /* [OLD 2026-10-10 v1.5.2->v1.6.0] The reserve label was green.
     if (m.reserve != null) P.push(`<text class="soc-t small" x="${f(right - 4)}" y="${f(YS(m.reserve) - 5)}" text-anchor="end">Reserve ${Math.round(m.reserve)}%</text>`);
+    [/OLD] */
+    if (m.reserve != null) P.push(`<text class="soc-t small res-t" x="${f(right - 4)}" y="${f(YS(m.reserve) - 5)}" text-anchor="end">Reserve ${Math.round(m.reserve)}%</text>`); // v1.6.0: red, like the scale at the reserve
   }
   if (kNeg) P.push(`<text class="exp-t" x="${L + 4}" y="${f(bottom - 4)}">export</text>`);
   /* [OLD 2026-10-09 v1.2.0->v1.3.0] Hour labels only; the Now chip was at the top.
@@ -1197,6 +1226,11 @@ ha-card.light { --ewt-now: #2F64B0; --ewt-buy: #3F6FD8; --ewt-sell: #7E57C2; }
 .tile .uline { position: relative; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--primary-text-color) 15%, transparent); }
 .tile .fill.g { width: 100%; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #E53935 0%, #E53935 var(--r), #FBC02D var(--r2), #FBC02D 60%, #4DD0A1 76%, #4DD0A1 100%); }
 .tile .bar .fill.g { height: 5px; }
+/* added 2026-10-10 v1.6.0: reserve line and label in the scale's red (the charge line, area and dot are coloured inline) */
+ha-card { --ewt-res-text: #EF5350; }
+ha-card.light { --ewt-res-text: #C62828; }
+.res { stroke: #E53935; }
+.soc-t.res-t { fill: var(--ewt-res-text); }
 .tile .uline .fill.u { height: 100%; border-radius: 2px; } /* added 2026-10-10 v1.5.2: single-colour battery line */
 .tile .uline .up { position: absolute; left: calc(100% + 6px); top: -4px; font-size: 9px; line-height: 11px; color: var(--secondary-text-color); white-space: nowrap; }
 .tile .rmark { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--primary-text-color); }
@@ -3214,7 +3248,11 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       // one colour scale — red up to the backup reserve, yellow to 60 %, green to 100 % — and the reserve mark through all
       const clamp = (v) => Math.max(0, Math.min(100, v));
       const rr = res != null ? clamp(res) : 0;
+      /* [OLD 2026-10-10 v1.5.2->v1.6.0] The total bar showed the scale's gradient up to its charge.
       const fill = (v) => `<div class="fill g" style="clip-path:inset(0 ${r1(100 - clamp(v))}% 0 0 round 3px)"></div>`;
+      [/OLD] */
+      // v1.6.0: the total bar is one colour too — the scale's colour at the total charge
+      const fill = (v) => `<div class="fill" style="width:${r1(clamp(v))}%;background:${socColour(v, rr)}"></div>`;
       const units = (m.units || []).filter((u) => u.soc !== null);
       /* [OLD 2026-10-10 v1.5.1->v1.5.2] Lines showed the scale's gradient up to their charge.
       const lines = units.map((u) => `<div class="uline">${fill(u.soc)}<span class="up">${Math.round(u.soc)}%</span></div>`).join("");

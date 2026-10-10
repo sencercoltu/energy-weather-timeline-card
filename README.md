@@ -72,6 +72,8 @@ Any hour not listed uses **Standard export rate**. When export periods are set, 
 
 **Graph toggles.** Chips under the graph show or hide **Battery** (the charge line and the reserve line), **Forecast**, **Home**, **Grid** (import) and **Export**; tap one to switch it. The kWh axis fits what is shown, and the summary tiles still count everything. Each browser remembers its own choice, so a wall tablet and your phone can show different lines. Turn the chips off with **Graph toggles** under **Show or hide**; the graph then shows every line.
 
+**Devices.** Under **Devices**, add each appliance that has a live power sensor (an EV charger, a heat pump …) and give it a name; an empty name uses the sensor's own. They appear in one cell across the full width, under the summary cells: each with its power now and a bar with its share of the home's use right now (this needs **Home power now**), and the devices' total at the top. A device using less than 5 W is shown faded, and an unavailable sensor shows a dash. W and kW sensors both work.
+
 ## What each entity needs
 
 - **Energy sensors** (solar, home, grid import, grid export, rain gauge) are cumulative meters, the same ones the Energy dashboard uses. The card reads their hourly statistics. A sensor without statistics (no `state_class`) is read from the recorder history instead. If an energy sensor is missing, or shows no change today while the matching power sensor shows a flow, the card integrates that power sensor over the day instead; for grid power, positive counts as import and negative as export. The browser console (F12) says which source each flow came from.
@@ -108,6 +110,11 @@ battery_unit_soc_entities:   # optional: main battery first, then expansions
 battery_power_entity: sensor.powerwall_battery_power
 battery_capacity: 27
 battery_reserve: 20
+devices:                     # optional: live power sensors with a name each
+  - entity: sensor.ev_charger_power
+    name: EV
+  - entity: sensor.heat_pump_power
+    name: Heat pump
 tariff:
   - { start: "00:30", end: "05:30", rate: 0.075, type: off_peak }
   - { start: "16:00", end: "19:00", rate: 0.366, type: peak }

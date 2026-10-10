@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.8.0
+- Summary cells are laid out in rows of three, down to narrow phones (two per row below about 340 px of card). In a narrow card the cells get a little tighter and their small lines wrap instead of being cut off; a number stays with its unit.
+- New **Devices** cell across the full width: add each appliance's live power sensor (an EV charger, a heat pump …) with a name under **Devices** in the editor. Each shows its power now and a bar with its share of the home's use right now; the cell's header shows the devices' total. A device below 5 W is faded, and an unavailable sensor shows a dash.
+
 ## v1.7.0
 - Graph toggles: chips under the graph show or hide **Battery** (the charge line and the reserve line), **Forecast**, **Home**, **Grid** (import) and **Export**. The kWh axis fits what is shown, and the summary tiles are not affected. Each browser remembers its own choice. Turn the chips off with **Graph toggles** under **Show or hide**.
 - The Now label no longer shows the time; the clock above already does.

@@ -36,7 +36,10 @@ const CARD_VERSION = "1.1.0";
 /* [OLD 2026-10-09 v1.2.0->v1.3.0] Version bump for MWh, the Now label on the time axis and fitting the sections grid.
 const CARD_VERSION = "1.2.0";
 [/OLD] */
+/* [OLD 2026-10-10 v1.3.0->v1.4.0] Version bump for round axis steps, the impossible-hour guard, the Buy band from a price entity, the Now chip back at the top and the money tile.
 const CARD_VERSION = "1.3.0";
+[/OLD] */
+const CARD_VERSION = "1.4.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -468,6 +471,40 @@ function integratePower(series, live, sign, ds, now, nh) {
 /* Timeline chart (pure function: model -> SVG string)                 */
 /* ------------------------------------------------------------------ */
 
+// added 2026-10-10 v1.4.0: a round axis step — 0.5, 1, 2, 5, 10, 20 … kWh (whole kWh once the top reaches 2) — giving
+// as many steps as the plot height has room for (2 to 5)
+function axisStep(max, plotH) {
+  const most = Math.max(2, Math.min(5, Math.floor(plotH / 30)));
+  const want = Math.max(1, max) / most;
+  const p = Math.pow(10, Math.floor(Math.log10(want)));
+  const step = [1, 2, 5, 10].map((x) => x * p).find((x) => x >= want - 1e-9);
+  return Math.max(max >= 2 ? 1 : 0.5, step);
+}
+
+// added 2026-10-10 v1.4.0: hourly energy a home can't produce (over SANE_KWH_H kWh in an hour). When a fifth or more of
+// the hours are over (and at least three, if the sensor claims an energy unit), the sensor reports Wh, so
+// every hour is divided by 1000. Any hour still over the limit is a meter that dropped to zero and came
+// back, and is left out. arr runs over the fetched hours, 0..nI-1 finished and nI the running one;
+// unitKnown says the sensor has an energy unit; at(i) gives a clock label for the console note.
+const SANE_KWH_H = 100;
+function saneFlow(arr, nI, at, unitKnown) {
+  let out = arr.slice();
+  const notes = [];
+  const done = out.slice(0, nI).filter((v) => v != null && v > 1e-4);
+  const over = done.filter((v) => v > SANE_KWH_H).length;
+  if ((unitKnown ? over >= 3 : over >= 1) && over >= 0.2 * done.length) {
+    out = out.map((v) => (v == null ? v : v / 1000));
+    notes.push(`${over} of ${done.length} hours read over ${SANE_KWH_H} kWh, so the values look like Wh and were divided by 1000`);
+  }
+  const bad = [];
+  out = out.map((v, i) => {
+    if (v != null && v > SANE_KWH_H) { bad.push(`${at(i)} (${Math.round(v)} kWh)`); return null; }
+    return v;
+  });
+  if (bad.length) notes.push(`left out ${bad.length} hour${bad.length > 1 ? "s" : ""} over ${SANE_KWH_H} kWh, a meter that dropped to zero and came back: ${bad.slice(0, 4).join(", ")}${bad.length > 4 ? " …" : ""}`);
+  return { arr: out, note: notes.join("; ") };
+}
+
 function smooth(pts, base, top) {
   const f = r1;
   const cy = (y) => Math.max(top, Math.min(base, y));
@@ -710,10 +747,19 @@ function chartSvg(W, m) {
   let maxPos = 0;
   for (const a of [m.solar, m.solarFc, m.home, m.imp]) if (a) a.forEach((v, j) => { if (v != null && v > maxPos && seen(j)) maxPos = v; });
   maxPos = Math.max(maxPos, rateAtNow(m.home), rateAtNow(m.imp));
+/* [OLD 2026-10-10 v1.3.0->v1.4.0] Odd maxima (6996, 3498, or 3.5) and lines at quarters of them; the axis now uses round steps.
   const kMax = maxPos <= 1 ? 1 : maxPos <= 2 ? 2 : Math.ceil(maxPos);
   let maxExp = 0;
   if (m.exp) m.exp.forEach((v, j) => { if (v != null && v > maxExp && seen(j)) maxExp = v; });
   const kNeg = m.exp ? Math.max(0.5, Math.ceil(maxExp * 2) / 2) : 0;
+[/OLD] */
+  // v1.4.0: round steps (see axisStep); the export depth rounds up to whole kWh once the steps are whole
+  const kStep = axisStep(maxPos, posH);
+  const kMax = Math.max(1, Math.ceil(maxPos / kStep - 1e-9) * kStep);
+  let maxExp = 0;
+  if (m.exp) m.exp.forEach((v, j) => { if (v != null && v > maxExp && seen(j)) maxExp = v; });
+  const kNegU = kStep >= 1 ? 1 : 0.5;
+  const kNeg = m.exp ? Math.max(kNegU, Math.ceil(maxExp / kNegU - 1e-9) * kNegU) : 0;
   const zero = top + posH;
   const Y = (v) => zero - (Math.max(-kNeg, Math.min(kMax, v)) / kMax) * posH;
   const YS = (p) => zero - (Math.max(0, Math.min(100, p)) / 100) * posH;
@@ -743,7 +789,10 @@ function chartSvg(W, m) {
   for (const h of m.days || []) dd += `M${f(X(h))},20V${H}`;
   if (dd) G.push(`<path class="daysep" d="${dd}"/>`);
   let gl = "";
+/* [OLD 2026-10-10 v1.3.0->v1.4.0] Grid lines at quarters of the maximum.
   for (let i = 1; i <= 4; i++) gl += `M${L},${f(Y((kMax * i) / 4))}H${f(right)}`;
+[/OLD] */
+  for (let i = 1; i * kStep <= kMax + 1e-9; i++) gl += `M${L},${f(Y(i * kStep))}H${f(right)}`; // v1.4.0: one line per step
   G.push(`<path class="gl" d="${gl}"/>`);
   if (kNeg) G.push(`<path class="gl dash" d="M${L},${f(Y(-kNeg))}H${f(right)}"/>`);
 
@@ -867,10 +916,22 @@ function chartSvg(W, m) {
   }
 
   // axis labels
+/* [OLD 2026-10-10 v1.3.0->v1.4.0] Labelled the maximum, half of it and zero.
   P.push(`<text class="t11" x="0" y="${f(top - 6)}">kWh</text>`);
   const kt = [kMax, kMax / 2, 0];
   if (kNeg) kt.push(-kNeg);
   for (const v of kt) P.push(`<text class="t11" x="${L - 6}" y="${f(Y(v) + 4)}" text-anchor="end">${fmtTick(v)}</text>`);
+[/OLD] */
+  // v1.4.0: a label on every step when they are 15 px apart or more, else on every other one counted down
+  // from the top; the unit switches to MWh once the top reaches 1000 kWh
+  const big = kMax >= 1000;
+  P.push(`<text class="t11" x="0" y="${f(top - 6)}">${big ? "MWh" : "kWh"}</text>`);
+  const nSteps = Math.round(kMax / kStep), every = (posH / nSteps) >= 15 ? 1 : 2;
+  const kt = [];
+  for (let i = nSteps; i > 0; i -= every) if (i >= every) kt.push(i * kStep);
+  kt.push(0);
+  if (kNeg) kt.push(-kNeg);
+  for (const v of kt) P.push(`<text class="t11" x="${L - 6}" y="${f(Y(v) + 4)}" text-anchor="end">${fmtTick(big ? v / 1000 : v)}</text>`);
   if (m.soc) {
     for (const p of [100, 50, 0]) P.push(`<text class="soc-t" x="${f(right + 6)}" y="${f(YS(p) + 4)}">${p}%</text>`);
     if (m.reserve != null) P.push(`<text class="soc-t small" x="${f(right - 4)}" y="${f(YS(m.reserve) - 5)}" text-anchor="end">Reserve ${Math.round(m.reserve)}%</text>`);
@@ -883,6 +944,7 @@ function chartSvg(W, m) {
     P.push(`<text class="t11${t.day ? " dayt" : ""}" x="${f(x)}" y="${f(xLabelBase)}" text-anchor="middle">${esc(t.label)}</text>`);
   }
   [/OLD] */
+/* [OLD 2026-10-10 v1.3.0->v1.4.0] The Now chip sat on the time axis, in a filled blue pill.
   // the Now chip sits on the time axis under the plot; hour labels that would touch it are left out
   const chipW = 14 + m.nowLabel.length * 6.3;
   for (const t of m.ticks || []) {
@@ -891,6 +953,13 @@ function chartSvg(W, m) {
     P.push(`<text class="t11${t.day ? " dayt" : ""}" x="${f(x)}" y="${f(xLabelBase)}" text-anchor="middle">${esc(t.label)}</text>`);
   }
   P.push(`<rect class="now-b" x="${f(nowX - chipW / 2)}" y="${f(xLabelBase - 12)}" width="${f(chipW)}" height="16" rx="8"/><text class="now-t" x="${f(nowX)}" y="${f(xLabelBase)}" text-anchor="middle">${esc(m.nowLabel)}</text>`);
+[/OLD] */
+  // v1.4.0: every hour label again; the Now chip went back to the top row
+  for (const t of m.ticks || []) {
+    const x = X(t.h);
+    if (x < L - 1 || x > right + 1) continue;
+    P.push(`<text class="t11${t.day ? " dayt" : ""}" x="${f(x)}" y="${f(xLabelBase)}" text-anchor="middle">${esc(t.label)}</text>`);
+  }
 
   const bandLabels = (segs, y, clsOf) => {
     for (const s of segs) {
@@ -912,7 +981,7 @@ function chartSvg(W, m) {
   }
   if (humY != null) P.push(`<text class="t10" x="0" y="${f(humY)}">RH</text>`);
 
-  // top row: every sunrise and sunset in view, nearest to now first (v1.3.0: the Now chip moved to the time axis)
+  // top row: the Now chip, then every sunrise and sunset in view that fits, nearest to now first
   const placed = [];
   const fits = (a, b) => placed.every((p) => b < p[0] - 4 || a > p[1] + 4);
   /* [OLD 2026-10-09 v1.2.0->v1.3.0] The Now chip was here, at the top; it moved to the time axis.
@@ -920,6 +989,10 @@ function chartSvg(W, m) {
   placed.push([nowX - chipW / 2, nowX + chipW / 2]);
   P.push(`<rect class="now-b" x="${f(nowX - chipW / 2)}" y="1" width="${f(chipW)}" height="16" rx="8"/><text class="now-t" x="${f(nowX)}" y="13" text-anchor="middle">${esc(m.nowLabel)}</text>`);
   [/OLD] */
+  // added 2026-10-10 v1.4.0: the Now chip is back at the top — outlined, with no fill, so the chart shows through
+  const chipW = 14 + m.nowLabel.length * 6.3;
+  placed.push([nowX - chipW / 2, nowX + chipW / 2]);
+  P.push(`<rect class="now-o" x="${f(nowX - chipW / 2 + 0.5)}" y="1.5" width="${f(chipW - 1)}" height="15" rx="7.5"/><text class="now-c" x="${f(nowX)}" y="13" text-anchor="middle">${esc(m.nowLabel)}</text>`);
   const marks = (m.sunMarks || []).slice().sort((a, b) => Math.abs(a.h - m.now) - Math.abs(b.h - m.now));
   for (const s of marks) {
     const x = X(s.h), w = 16 + s.label.length * 6.2, cls = s.kind;
@@ -1055,6 +1128,19 @@ svg.tl text { font-family: inherit; }
 .storm .s-title { font-weight: 600; }
 .storm svg path { fill: #FFFFFF; }
 .tile .tv.earn { color: var(--ewt-soc-text); }
+/* added 2026-10-10 v1.4.0: the Now chip with no fill; the money tile's split bar and colour dots */
+ha-card { --ewt-now: #82AAFF; --ewt-buy: #5B8DEF; --ewt-sell: #9575CD; }
+ha-card.light { --ewt-now: #2F64B0; --ewt-buy: #3F6FD8; --ewt-sell: #7E57C2; }
+.now-o { fill: none; stroke: var(--ewt-now); stroke-width: 1; }
+.now-c { fill: var(--ewt-now); font-size: 11px; font-weight: 600; }
+.bar.split { display: flex; overflow: hidden; }
+.bar.split .fill { border-radius: 0; }
+.bar.split .fill.b { background: var(--ewt-buy); }
+.bar.split .fill.s { background: var(--ewt-sell); }
+.tile .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
+.tile .dot.b { background: var(--ewt-buy); }
+.tile .dot.s { background: var(--ewt-sell); }
+.tile .gap { display: inline-block; width: 10px; }
 `;
 
 /* ------------------------------------------------------------------ */
@@ -1118,7 +1204,10 @@ const HELPERS = {
   battery_capacity: "Used for the 'full at' and 'reserve at' estimates. A Powerwall 3 with one expansion is about 27 kWh.",
   battery_reserve_entity: "If set, overrides the fixed reserve value below.",
   tariff: "List of periods. Example:\n- start: '00:30'\n  end: '05:30'\n  rate: 0.075\n  type: off_peak\n- start: '16:00'\n  end: '19:00'\n  rate: 0.366\n  type: peak\ntype is off_peak, standard or peak. Hours not listed use the standard rate. Optional label replaces the default text.",
+  /* [OLD 2026-10-10 v1.3.0->v1.4.0] Did not mention the Buy band.
   import_rate_entity: "Used for the cost tile when no tariff periods are set. Its recorded history gives each hour's price.",
+  [/OLD] */
+  import_rate_entity: "Used for the Buy band and the cost tile when no tariff periods are set. Its rate list (if it has one), recorded history and current state give each half hour's price.",
   currency: "Leave empty to use the Home Assistant currency.",
   export_rate: "Used for every hour not covered by the export tariff periods.", // added 2026-10-09 v1.1.0
   export_tariff: "Same format as the import tariff periods, with your export rates. Example:\n- start: '16:00'\n  end: '19:00'\n  rate: 0.29\n  type: peak\nHours not listed use the standard export rate. Shown as a second band and used for today's income.", // added 2026-10-09 v1.1.0
@@ -2284,10 +2373,26 @@ class EnergyWeatherTimelineCard extends HTMLElement {
           arr = p;
         }
       }
+      /* [OLD 2026-10-10 v1.3.0->v1.4.0] No check for impossible hours.
       const diag = arr ? `${f.label} from ${src}` : `${f.label}: no data${why ? ` — ${why}` : ""}`;
       if (this._flowDiag[key] !== diag) {
         this._flowDiag[key] = diag;
         (arr ? console.info : console.warn)(`${CARD_TAG} v${CARD_VERSION}: ${diag}`);
+      }
+      [/OLD] */
+      // v1.4.0: hours a home can't produce are corrected or left out (saneFlow), and the console says so
+      let fix = "";
+      if (arr && key !== "rain") {
+        const fromMeter = src.startsWith("statistics") || src.startsWith("recorder"); // else integrated from power (kW)
+        const unitKnown = !fromMeter || ENERGY_F[est?.attributes?.unit_of_measurement] != null;
+        const r = saneFlow(arr, nI, (i) => this._fmtWhen(fs + i * HOUR), unitKnown);
+        arr = r.arr;
+        fix = r.note;
+      }
+      const diag = arr ? `${f.label} from ${src}${fix ? ` — ${fix}` : ""}` : `${f.label}: no data${why ? ` — ${why}` : ""}`;
+      if (this._flowDiag[key] !== diag) {
+        this._flowDiag[key] = diag;
+        (arr && !fix ? console.info : console.warn)(`${CARD_TAG} v${CARD_VERSION}: ${diag}`);
       }
       if (!arr) flowNotes.push(f.label);
       return arr;
@@ -2499,6 +2604,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       const segs = tariffSegments(this._tariff, stdRate);
       if (c.show_tariff !== false) m.tariff = spread(segs);
       m.rateAt = (k) => { const h = clockOf(k), s = segs.find((x) => h >= x.a && h < x.b); return s && s.rate != null ? s.rate : stdRate; };
+    /* [OLD 2026-10-10 v1.3.0->v1.4.0] The import price entity only priced the cost tile; no Buy band was drawn for it (or for a flat rate).
     } else if (c.import_rate_entity) {
       const st = S(c.import_rate_entity);
       const unit = String(st?.attributes?.unit_of_measurement || "");
@@ -2514,6 +2620,21 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       };
     } else if (stdRate !== null) {
       m.rateAt = () => stdRate;
+    }
+    [/OLD] */
+    } else if (c.import_rate_entity) {
+      // v1.4.0: read like the export price entity (rate list, recorded history, live state), and drawn as the Buy band
+      const src = this._rateSource(c.import_rate_entity, ds, now, "import");
+      const at = (k) => src.at(ds + k * HOUR);
+      m.rateAt = (k) => {
+        const a = at(k - 0.25), b = at(k + 0.25);
+        const v = a !== null && b !== null ? (a + b) / 2 : a !== null ? a : b;
+        return v !== null ? v : stdRate;
+      };
+      if (c.show_tariff !== false) m.tariff = this._rateBand(at, wStart, wEnd);
+    } else if (stdRate !== null) {
+      m.rateAt = () => stdRate;
+      if (c.show_tariff !== false) m.tariff = [{ a: wStart, b: wEnd, rate: stdRate, type: "standard", plain: true, label: null }]; // added 2026-10-10 v1.4.0: a flat rate still gets its Buy band
     }
     /* [OLD 2026-10-09 v1.1.0->v1.2.0] Export rate came only from the export tariff periods or the flat rate.
     const expRate = num(c.export_rate);
@@ -2575,7 +2696,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   // added 2026-10-09 v1.2.0: a price entity as a rate source. at(ms) gives currency per kWh, or null when unknown:
   // the schedule in its attributes first, then its recorded history (past), then its live state (now, and
   // up to the end of the current rate period when the entity says when that is). One console line per outcome.
+  /* [OLD 2026-10-10 v1.3.0->v1.4.0] No kind; only the export price used it.
   _rateSource(id, ds, now) {
+  [/OLD] */
+  _rateSource(id, ds, now, kind = "export") { // v1.4.0: kind names the price in the console line
     const st = this._hass.states[id];
     if (!st) {
       this._rateDiagLog(id, `${id} not found`, true);
@@ -2619,7 +2743,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     if (sched.entries.length) parts.push(`rate list in ${sched.names.join(" + ")} (${sched.entries.length} entries, ×${sf} to ${this._currency()}/kWh)`);
     if (raw.length) parts.push(`recorded history (${raw.length} values)`);
     if (liveV !== null) parts.push(`live state ${st.state} ${a.unit_of_measurement || ""}`.trim());
+    /* [OLD 2026-10-10 v1.3.0->v1.4.0] Always said export.
     this._rateDiagLog(id, parts.length ? `export price from ${id}: ${parts.join(", ")}${sched.entries.length ? "" : "; no rate list in its attributes, so hours after the current one are blank"}` : `${id} has no usable price (state "${st.state}", no rate list in its attributes)`, !parts.length);
+    [/OLD] */
+    this._rateDiagLog(id, parts.length ? `${kind} price from ${id}: ${parts.join(", ")}${sched.entries.length ? "" : "; no rate list in its attributes, so hours after the current one are blank"}` : `${id} has no usable price (state "${st.state}", no rate list in its attributes)`, !parts.length);
     return { at };
   }
   _rateDiagLog(id, msg, warn) {
@@ -2869,11 +2996,21 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     </div>`;
   }
 
+  /* [OLD 2026-10-10 v1.3.0->v1.4.0] Plain-text first line only.
   _tile(sw, label, value, s1, s2, valueHtml) {
     return `<div class="tile">
       <div class="tl">${sw}<span>${esc(label)}</span></div>
       ${valueHtml || `<div class="tv">${esc(value)}</div>`}
       <div class="ts">${esc(s1 || "")}&nbsp;</div>
+      <div class="ts">${esc(s2 || "")}&nbsp;</div>
+    </div>`;
+  }
+  [/OLD] */
+  _tile(sw, label, value, s1, s2, valueHtml, s1Html) { // v1.4.0: s1Html (already escaped) for coloured dots
+    return `<div class="tile">
+      <div class="tl">${sw}<span>${esc(label)}</span></div>
+      ${valueHtml || `<div class="tv">${esc(value)}</div>`}
+      <div class="ts">${s1Html || esc(s1 || "")}&nbsp;</div>
       <div class="ts">${esc(s2 || "")}&nbsp;</div>
     </div>`;
   }
@@ -2993,6 +3130,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         <div class="bar"><div class="fill" style="width:${soc}%"></div>${res != null ? `<div class="tick" style="left:${Math.max(0, Math.min(100, res))}%"></div>` : ""}</div></div>`;
       t.push(this._tile(SW.soc, c.battery_name || "Battery", "", status, est, valueHtml));
     }
+    /* [OLD 2026-10-10 v1.3.0->v1.4.0] Said cost twice (title and first line) and income once.
     if (m.cost) {
       const earn = m.cost.net < -0.005;
       const parts = [];
@@ -3001,6 +3139,26 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       const valueHtml = `<div class="tv${earn ? " earn" : ""}">${esc(this._money(Math.abs(m.cost.net)))}</div>`;
       t.push(this._tile(SW.cost, earn ? "Today's earnings" : "Today's cost", "", parts.join(" · "),
         m.selfPowered != null ? `${Math.round(m.selfPowered * 100)}% self-powered` : "", valueHtml));
+    } else if (m.selfPowered != null) {
+    [/OLD] */
+    // v1.4.0: the money tile names each figure once — net in the title, then bought (import) and sold (export)
+    // in the timeline's colours, with a bar splitting the two
+    if (m.cost) {
+      const imp = m.cost.imp, exp = m.cost.exp, both = imp != null && exp != null;
+      const earn = both ? m.cost.net < -0.005 : imp == null;
+      const label = both ? (earn ? "Net earnings" : "Net cost") : imp != null ? "Grid cost" : "Export income";
+      const val = both ? Math.abs(m.cost.net) : imp != null ? imp : exp;
+      const tot = (imp || 0) + (exp || 0);
+      const bar = both && tot > 0
+        ? `<div class="bar split"><div class="fill b" style="width:${r1((imp / tot) * 100)}%"></div><div class="fill s" style="width:${r1((exp / tot) * 100)}%"></div></div>`
+        : "";
+      const valueHtml = `<div class="row"><span class="tv${earn ? " earn" : ""}">${esc(this._money(val))}</span>${bar}</div>`;
+      const dot = (cls, text) => `<span class="dot ${cls}"></span>${esc(text)}`;
+      const s1Html = both
+        ? `${dot("b", `${this._money(imp)} bought`)}<span class="gap"></span>${dot("s", `${this._money(exp)} sold`)}`
+        : imp != null ? dot("b", m.impToday != null ? `${this._kwh(m.impToday)} bought` : "bought")
+        : dot("s", m.expToday != null ? `${this._kwh(m.expToday)} sold` : "sold");
+      t.push(this._tile(SW.cost, label, "", "", m.selfPowered != null ? `${Math.round(m.selfPowered * 100)}% self-powered` : "", valueHtml, s1Html));
     } else if (m.selfPowered != null) {
       t.push(this._tile(SW.cost, "Self-powered", `${Math.round(m.selfPowered * 100)}%`, "of home use from solar and battery", ""));
     }

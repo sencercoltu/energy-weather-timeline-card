@@ -53,6 +53,8 @@ The tariff periods use a small YAML box inside the editor:
 
 `type` is `off_peak`, `standard` or `peak`. Any hour not listed uses **Standard import rate**. Rates are in your currency per kWh, so 0.245 means 24.5p. An optional `label:` replaces the default "off-peak" or "peak" text.
 
+**Import price entity.** If your import price lives in its own entity (for example Octopus Energy's *current rate* sensor or its *current day rates* event), pick it under **Tariff and cost** instead of listing periods. It is read the same way as the export price entity below and drawn as the **Buy** band. With neither periods nor an entity, the **Standard import rate** alone still gives a flat Buy band.
+
 **Export tariff periods** use the same format with your export rates, for example a peak export window:
 
 ```yaml
@@ -66,12 +68,12 @@ Any hour not listed uses **Standard export rate**. When export periods are set, 
 
 **Export price entity.** If your export price lives in its own entity, pick it under **Tariff and cost**; it takes priority over the export periods. Past hours come from its recorded history. Upcoming hours come from a list of rates in its attributes, if it has one, for example Octopus Energy's *export current day rates* event or Nord Pool's `raw_today` / `raw_tomorrow`. Without such a list, the Sell band stops after the current rate period. Units such as GBP/kWh and p/kWh are converted, and the browser console (F12) says which parts of the entity were used.
 
-**Timeline length** (under **Show or hide**) is 24, 36 or 48 hours, with now always in the centre. The past half comes from your history, reaching back into yesterday; the future half comes from the weather and solar forecasts, reaching into tomorrow. Each midnight is marked with the day's name, and every sunrise and sunset in view is marked at the top.
+**Timeline length** (under **Show or hide**) is 24, 36 or 48 hours, with now always in the centre. The past half comes from your history, reaching back into yesterday; the future half comes from the weather and solar forecasts, reaching into tomorrow. Each midnight is marked with the day's name. The blue **Now** label and every sunrise and sunset in view are marked at the top.
 
 ## What each entity needs
 
 - **Energy sensors** (solar, home, grid import, grid export, rain gauge) are cumulative meters, the same ones the Energy dashboard uses. The card reads their hourly statistics. A sensor without statistics (no `state_class`) is read from the recorder history instead. If an energy sensor is missing, or shows no change today while the matching power sensor shows a flow, the card integrates that power sensor over the day instead; for grid power, positive counts as import and negative as export. The browser console (F12) says which source each flow came from.
-- **Battery state of charge, weather and import price** are read from today's recorder history.
+- **Battery state of charge, weather and the import and export price entities** are read from the recorder history.
 - **Weather** must support hourly forecasts. The card subscribes to them, so the forecast hours update live.
 - **Solar forecast**: pick a *forecast today* sensor whose attributes hold the hour-by-hour (or half-hourly, 15-minute) forecast, as Solcast and Open-Meteo Solar Forecast do. The card finds the series in the attributes whatever its layout and works out the unit by matching the sensor's daily total. If you leave the entity empty, or it has no such attributes, the card uses the forecast linked to your solar panels in the Energy dashboard. The browser console (F12) shows one line saying which source it used, or why it found none.
 - **Power sign conventions**:
@@ -116,7 +118,7 @@ timeline_hours: "24"
 ## Good to know
 
 - **Time zone.** The clock and the timeline follow the time zone in your Home Assistant profile, not the device's. You can set a fixed `time_zone` instead.
-- **Cost and income are approximate.** Both are worked out per hour, at the rate in force at the middle of each hour. A tariff that changes on a half hour (00:30, 05:30) will be a few pence off your bill. The money tile shows the net amount; it turns green and reads "Today's earnings" when export income is larger than import cost.
+- **Cost and income are approximate.** Both are worked out per hour: price entities at the average of the hour's two half hours, tariff periods at the rate in force at the middle of the hour. A tariff period that changes on a half hour (00:30, 05:30) will be a few pence off your bill. The money tile shows the net amount ("Net cost", or "Net earnings" in green when export income is larger), then what you bought and sold, with a bar splitting the two, and the self-powered share.
 - **Self-powered %** is the share of home use not covered directly by grid import in each hour. That's close to how the Tesla app reports it.
 - **The running hour** is shown dashed. Its value comes from the live meter reading, so it updates as you watch.
 - **Battery time left** needs **Usable battery capacity**. Discharging: time until the backup reserve, and the clock time. Charging: time until full. Idle or full: how long it would last at the current home use. Anything over two days shows as "2+ days".
@@ -125,4 +127,6 @@ timeline_hours: "24"
 - **Sections view.** The card starts at 12 columns × 12 rows and fits whatever size you give it in the card's **Layout** tab (at least 6 columns × 7 rows). The graph grows or shrinks to fill the space; when space is tight, the humidity row, rain lane, tariff bands, summary tiles and weather icons are left out, in that order. In other views the card is as tall as its content.
 - **Today only.** The summary tiles (solar, home, grid, cost and income, self-powered %) always count from midnight to now. Only the graph reaches into yesterday and tomorrow.
 - **Large totals.** Energy totals of 1000 kWh and above are shown in MWh with two decimals.
+- **Axis.** The kWh axis counts in round steps (0.5, 1, 2, 5, 10 … kWh), as many as the graph's height has room for.
+- **Impossible hours.** A home can't use or produce more than 100 kWh in an hour. When a fifth or more of an energy sensor's hours read above that, its values are taken as Wh and divided by 1000. A single hour above it is a meter that dropped to zero and came back, so it is left out. Either way the browser console (F12) names the sensor and the hours.
 - **Versions.** The version is shown in the card picker and in the browser console. In the GitHub repo, changing `CARD_VERSION` and pushing publishes a matching release automatically, which HACS then offers as an update.

@@ -42,7 +42,10 @@ const CARD_VERSION = "1.3.0";
 /* [OLD 2026-10-10 v1.4.0->v1.5.0] Version bump for per-battery charge lines and the see-through Now label.
 const CARD_VERSION = "1.4.0";
 [/OLD] */
+/* [OLD 2026-10-10 v1.5.0->v1.5.1] Version bump for the running hour of a meter that reset at midnight.
 const CARD_VERSION = "1.5.0";
+[/OLD] */
+const CARD_VERSION = "1.5.1";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -2394,7 +2397,12 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         const b = this._base[f.energy] || { change: 0, state: null };
         const live = f.conv(est);
         let part = b.change || 0;
+        /* [OLD 2026-10-10 v1.5.0->v1.5.1] A daily meter that reset at midnight read lower than its value at the hour start, so the running hour counted nothing: just after midnight, grid import read 0 and self-powered showed 100 %.
         if (b.state != null && live != null && live >= b.state) part += live - b.state;
+        [/OLD] */
+        // v1.5.1: a meter that reset since the hour began (a daily meter just after midnight) counts from zero;
+        // a dip of under 10 % is meter noise and adds nothing
+        if (b.state != null && live != null) part += live >= b.state ? live - b.state : live < b.state * 0.9 ? live : 0;
         arr[nI] = part;
         src = `statistics of ${f.energy}`;
       } else if (f.energy && this._series[f.energy]?.length) {

@@ -39,7 +39,10 @@ const CARD_VERSION = "1.2.0";
 /* [OLD 2026-10-10 v1.3.0->v1.4.0] Version bump for round axis steps, the impossible-hour guard, the Buy band from a price entity, the Now chip back at the top and the money tile.
 const CARD_VERSION = "1.3.0";
 [/OLD] */
+/* [OLD 2026-10-10 v1.4.0->v1.5.0] Version bump for per-battery charge lines and the see-through Now label.
 const CARD_VERSION = "1.4.0";
+[/OLD] */
+const CARD_VERSION = "1.5.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -504,6 +507,9 @@ function saneFlow(arr, nI, at, unitKnown) {
   if (bad.length) notes.push(`left out ${bad.length} hour${bad.length > 1 ? "s" : ""} over ${SANE_KWH_H} kWh, a meter that dropped to zero and came back: ${bad.slice(0, 4).join(", ")}${bad.length > 4 ? " …" : ""}`);
   return { arr: out, note: notes.join("; ") };
 }
+
+// added 2026-10-10 v1.5.0: the per-battery charge entities from the config (a list, or one id)
+const unitSocIds = (c) => (Array.isArray(c.battery_unit_soc_entities) ? c.battery_unit_soc_entities : [c.battery_unit_soc_entities]).filter((x) => typeof x === "string" && x);
 
 function smooth(pts, base, top) {
   const f = r1;
@@ -989,6 +995,7 @@ function chartSvg(W, m) {
   placed.push([nowX - chipW / 2, nowX + chipW / 2]);
   P.push(`<rect class="now-b" x="${f(nowX - chipW / 2)}" y="1" width="${f(chipW)}" height="16" rx="8"/><text class="now-t" x="${f(nowX)}" y="13" text-anchor="middle">${esc(m.nowLabel)}</text>`);
   [/OLD] */
+/* [OLD 2026-10-10 v1.4.0->v1.5.0] The Now chip took its space first, so a sunrise or sunset under it was left out.
   // added 2026-10-10 v1.4.0: the Now chip is back at the top — outlined, with no fill, so the chart shows through
   const chipW = 14 + m.nowLabel.length * 6.3;
   placed.push([nowX - chipW / 2, nowX + chipW / 2]);
@@ -998,11 +1005,26 @@ function chartSvg(W, m) {
     const x = X(s.h), w = 16 + s.label.length * 6.2, cls = s.kind;
     const x0 = [x - w / 2, x - w / 2 + 14, x - w / 2 - 14, x - w / 2 + 26, x - w / 2 - 26].find((a) => a >= 0 && a + w <= W && fits(a, a + w));
     if (x0 === undefined) continue;
+[/OLD] */
+  // v1.5.0: a sunrise or sunset no longer disappears under the Now chip: it takes a nearby spot clear of the chip,
+  // else the spot just beside the chip (on its own side first), and only as a last resort sits under it; the chip
+  // is drawn last and see-through
+  const chipW = 14 + m.nowLabel.length * 6.3;
+  const clearOfChip = (a, b) => b < nowX - chipW / 2 - 4 || a > nowX + chipW / 2 + 4;
+  const marks = (m.sunMarks || []).slice().sort((a, b) => Math.abs(a.h - m.now) - Math.abs(b.h - m.now));
+  for (const s of marks) {
+    const x = X(s.h), w = 16 + s.label.length * 6.2, cls = s.kind;
+    const left = nowX - chipW / 2 - 5 - w, right = nowX + chipW / 2 + 5;
+    const spots = [x - w / 2, x - w / 2 + 14, x - w / 2 - 14, x - w / 2 + 26, x - w / 2 - 26].concat(x < nowX ? [left, right] : [right, left])
+      .filter((a) => a >= 0 && a + w <= W && fits(a, a + w));
+    const x0 = spots.find((a) => clearOfChip(a, a + w)) ?? spots[0];
+    if (x0 === undefined) continue;
     placed.push([x0, x0 + w]);
     P.push(`<path class="${cls}" d="M${f(x0 + 1)},12a5,5 0 0,1 10,0Z"/>`);
     if (cls === "rise") P.push(`<path class="rise-l" d="M${f(x0 + 6)},2V4.5"/>`);
     P.push(`<text class="${cls}-t" x="${f(x0 + 14)}" y="13">${esc(s.label)}</text>`);
   }
+  P.push(`<g class="now-g"><rect class="now-o" x="${f(nowX - chipW / 2 + 0.5)}" y="1.5" width="${f(chipW - 1)}" height="15" rx="7.5"/><text class="now-c" x="${f(nowX)}" y="13" text-anchor="middle">${esc(m.nowLabel)}</text></g>`); // added 2026-10-10 v1.5.0
 
   const clip = `${m.uid || "ewt"}-clip`;
   return {
@@ -1141,6 +1163,18 @@ ha-card.light { --ewt-now: #2F64B0; --ewt-buy: #3F6FD8; --ewt-sell: #7E57C2; }
 .tile .dot.b { background: var(--ewt-buy); }
 .tile .dot.s { background: var(--ewt-sell); }
 .tile .gap { display: inline-block; width: 10px; }
+/* added 2026-10-10 v1.5.0: see-through Now chip; battery tile with the total and one line per battery on a red / yellow / green
+   scale (red up to the reserve, yellow to 60 %, green to 100 %), and the reserve mark through all of them */
+.now-g { opacity: 0.75; }
+.tile .bars { flex: 1; min-width: 0; }
+.tile .trk { position: relative; display: flex; flex-direction: column; gap: 7px; }
+.tile .trk.u { margin-right: 30px; }
+.tile .trk .bar { flex: none; }
+.tile .uline { position: relative; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--primary-text-color) 15%, transparent); }
+.tile .fill.g { width: 100%; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #E53935 0%, #E53935 var(--r), #FBC02D var(--r2), #FBC02D 60%, #4DD0A1 76%, #4DD0A1 100%); }
+.tile .bar .fill.g { height: 5px; }
+.tile .uline .up { position: absolute; left: calc(100% + 6px); top: -4px; font-size: 9px; line-height: 11px; color: var(--secondary-text-color); white-space: nowrap; }
+.tile .rmark { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--primary-text-color); }
 `;
 
 /* ------------------------------------------------------------------ */
@@ -1165,6 +1199,7 @@ const LABELS = {
   grid_power_invert: "Invert grid power sign",
   battery_name: "Battery name",
   battery_soc_entity: "Battery state of charge",
+  battery_unit_soc_entities: "Each battery's state of charge (optional)", // added 2026-10-10 v1.5.0
   battery_power_entity: "Battery power",
   battery_power_invert: "Invert battery power sign",
   battery_capacity: "Usable battery capacity",
@@ -1203,6 +1238,7 @@ const HELPERS = {
   battery_power_entity: "Positive while discharging, negative while charging (Powerwall convention). Use the toggle below if yours is the other way round.",
   battery_capacity: "Used for the 'full at' and 'reserve at' estimates. A Powerwall 3 with one expansion is about 27 kWh.",
   battery_reserve_entity: "If set, overrides the fixed reserve value below.",
+  battery_unit_soc_entities: "Main battery first, then each expansion. Shown as thin lines under the battery tile's charge bar.", // added 2026-10-10 v1.5.0
   tariff: "List of periods. Example:\n- start: '00:30'\n  end: '05:30'\n  rate: 0.075\n  type: off_peak\n- start: '16:00'\n  end: '19:00'\n  rate: 0.366\n  type: peak\ntype is off_peak, standard or peak. Hours not listed use the standard rate. Optional label replaces the default text.",
   /* [OLD 2026-10-10 v1.3.0->v1.4.0] Did not mention the Buy band.
   import_rate_entity: "Used for the cost tile when no tariff periods are set. Its recorded history gives each hour's price.",
@@ -1299,6 +1335,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
           schema: [
             { name: "battery_name", selector: { text: {} } },
             { name: "battery_soc_entity", selector: { entity: { filter: { domain: "sensor", device_class: "battery" } } } },
+            { name: "battery_unit_soc_entities", selector: { entity: { multiple: true, filter: { domain: "sensor" } } } }, // added 2026-10-10 v1.5.0
             { name: "battery_power_entity", selector: POWER_SENSOR },
             { name: "battery_power_invert", selector: { boolean: {} } },
             { name: "battery_capacity", selector: { number: { min: 0, max: 500, step: 0.1, mode: "box", unit_of_measurement: "kWh" } } },
@@ -1473,8 +1510,12 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       /* [OLD 2026-10-09 v1.1.0->v1.2.0] No export price entity.
       "battery_power_entity", "battery_reserve_entity", "import_rate_entity",
       [/OLD] */
+    /* [OLD 2026-10-10 v1.4.0->v1.5.0] No per-battery charge entities.
       "battery_power_entity", "battery_reserve_entity", "import_rate_entity", "export_rate_entity",
     ].map((k) => c[k]).filter(Boolean);
+    [/OLD] */
+      "battery_power_entity", "battery_reserve_entity", "import_rate_entity", "export_rate_entity",
+    ].map((k) => c[k]).concat(unitSocIds(c)).filter(Boolean); // v1.5.0: and each battery's charge
   }
   _entitiesChanged(a, b) {
     for (const id of this._entityIds()) if (a.states[id] !== b.states[id]) return true;
@@ -2505,6 +2546,14 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         m.fullSince = i > 0 ? series[i][0] : null;
       }
     }
+    // added 2026-10-10 v1.5.0: each battery's own charge, main first, then expansions; without a total entity their mean stands in
+    const unitIds = unitSocIds(c);
+    if (unitIds.length) {
+      m.units = unitIds.map((id, i) => ({ name: i === 0 ? "Main" : unitIds.length > 2 ? `Expansion ${i}` : "Expansion", soc: num(S(id)?.state) }));
+      const known = m.units.filter((u) => u.soc !== null);
+      if (m.socNow == null && known.length) m.socNow = known.reduce((a, u) => a + u.soc, 0) / known.length;
+      if (m.reserve == null) { const resEnt = num(S(c.battery_reserve_entity)?.state); m.reserve = resEnt !== null ? resEnt : num(c.battery_reserve); }
+    }
 
     // weather: history before the running hour, the live state for it, the hourly forecast after it
     const wx = S(c.weather_entity);
@@ -3126,8 +3175,22 @@ class EnergyWeatherTimelineCard extends HTMLElement {
           est = h >= 48 ? "Lasts 2+ days at current use" : `Lasts ${left(h)} at current use`;
         }
       }
+      /* [OLD 2026-10-10 v1.4.0->v1.5.0] One green bar with a reserve tick; no per-battery charge.
       const valueHtml = `<div class="row"><span class="tv">${Math.round(soc)}%</span>
         <div class="bar"><div class="fill" style="width:${soc}%"></div>${res != null ? `<div class="tick" style="left:${Math.max(0, Math.min(100, res))}%"></div>` : ""}</div></div>`;
+      t.push(this._tile(SW.soc, c.battery_name || "Battery", "", status, est, valueHtml));
+      [/OLD] */
+      // v1.5.0: the total charge as the bar, each battery (main first) as a thin line under it with its percentage, all on
+      // one colour scale — red up to the backup reserve, yellow to 60 %, green to 100 % — and the reserve mark through all
+      const clamp = (v) => Math.max(0, Math.min(100, v));
+      const rr = res != null ? clamp(res) : 0;
+      const fill = (v) => `<div class="fill g" style="clip-path:inset(0 ${r1(100 - clamp(v))}% 0 0 round 3px)"></div>`;
+      const units = (m.units || []).filter((u) => u.soc !== null);
+      const lines = units.map((u) => `<div class="uline">${fill(u.soc)}<span class="up">${Math.round(u.soc)}%</span></div>`).join("");
+      const tip = units.map((u) => `${u.name} ${Math.round(u.soc)}%`).join(" · ");
+      const valueHtml = `<div class="row"><span class="tv">${Math.round(soc)}%</span><div class="bars"${tip ? ` title="${esc(tip)}"` : ""}>`
+        + `<div class="trk${units.length ? " u" : ""}" style="--r:${r1(rr)}%;--r2:${r1(Math.min(60, rr + 8))}%"><div class="bar">${fill(soc)}</div>${lines}`
+        + `${res != null ? `<div class="rmark" style="left:${r1(rr)}%"></div>` : ""}</div></div></div>`;
       t.push(this._tile(SW.soc, c.battery_name || "Battery", "", status, est, valueHtml));
     }
     /* [OLD 2026-10-10 v1.3.0->v1.4.0] Said cost twice (title and first line) and income once.

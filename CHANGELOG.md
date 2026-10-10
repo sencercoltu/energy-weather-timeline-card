@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.5.2
+- Battery tile: each battery's line is now one solid colour, the colour the red / yellow / green scale has at that battery's own charge. The total bar keeps the blended scale.
+
 ## v1.5.1
 - Fixed: just after midnight, a daily energy meter (one that resets to zero each day) read as no energy for the running hour, so grid import showed 0 and self-powered showed 100 %. The running hour now counts from zero after a reset.
 

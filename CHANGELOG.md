@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.0
+- The kWh axis counts in round steps (0.5, 1, 2, 5, 10 … kWh) instead of odd maxima such as 6996 and 3498, with one grid line per step.
+- Hours a home can't produce (over 100 kWh in an hour) are caught: values that are really Wh are divided by 1000, and a lone spike from a meter that dropped to zero and came back is left out. The browser console names the sensor and the hours.
+- The import price entity now draws the Buy band, read the same way as the export price entity (rate list, recorded history, current state). A flat standard import rate gets a Buy band too.
+- The Now label is back at the top of the graph, outlined with no fill.
+- The money tile names each figure once: "Net cost" (or "Net earnings"), then bought and sold in the graph's import and export colours with a bar splitting the two, and the self-powered share.
+
 ## v1.3.0
 - Fits the sections grid: a default size of 12 columns × 12 rows (minimum 6 × 7), and the card fills whatever rows and columns it is given. The graph grows or shrinks to fit; when space is tight, the humidity row, rain lane, tariff bands, tiles and weather icons are left out, in that order.
 - The blue Now label sits on the time axis under the graph instead of at the top.

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.7.0
+- Graph toggles: chips under the graph show or hide **Battery** (the charge line and the reserve line), **Forecast**, **Home**, **Grid** (import) and **Export**. The kWh axis fits what is shown, and the summary tiles are not affected. Each browser remembers its own choice. Turn the chips off with **Graph toggles** under **Show or hide**.
+- The Now label no longer shows the time; the clock above already does.
+- Sections view: when space is tight, the chips are left out after the tariff bands.
+
 ## v1.6.0
 - One battery colour scale everywhere: red up to the backup reserve, yellow up to 50 % (was 60 %), green from 80 %, blended in between.
 - Battery tile: the total charge bar is now one solid colour from that scale, like each battery's line.

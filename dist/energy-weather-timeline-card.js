@@ -54,7 +54,10 @@ const CARD_VERSION = "1.5.2";
 /* [OLD 2026-10-10 v1.6.0->v1.7.0] Version bump for the graph toggles and the Now label without the time.
 const CARD_VERSION = "1.6.0";
 [/OLD] */
+/* [OLD 2026-10-10 v1.7.0->v1.8.0] Version bump for cells in rows of three and the Devices cell.
 const CARD_VERSION = "1.7.0";
+[/OLD] */
+const CARD_VERSION = "1.8.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -260,6 +263,7 @@ const SW = {
   exp: `<svg width="8" height="10" viewBox="0 0 8 10" aria-hidden="true"><rect x=".5" y=".5" width="7" height="9" rx="1.5" style="fill:#9575CD;fill-opacity:.7;stroke:#B39DDB"/></svg>`,
   soc: `<svg width="12" height="10" viewBox="0 0 14 12" aria-hidden="true"><path d="M1,11V6Q4,2 7,4T13,2V11Z" style="fill:#4DD0A1;fill-opacity:.25;stroke:#4DD0A1;stroke-width:1.5"/></svg>`,
   cost: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.8" class="sw-cost"/></svg>`,
+  dev: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.2,1V3.6M7.8,1V3.6M2.6,3.6H9.4V6A3.4,3.4 0 0 1 2.6,6ZM6,9.4V11.3" style="fill:none;stroke:#F48FB1;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round"/></svg>`, // added 2026-10-10 v1.8.0
 };
 
 /* ------------------------------------------------------------------ */
@@ -523,6 +527,10 @@ function saneFlow(arr, nI, at, unitKnown) {
 // added 2026-10-10 v1.5.0: the per-battery charge entities from the config (a list, or one id)
 // added 2026-10-10 v1.7.0: the graph series a chip can show or hide, in chip order: [key, label]
 const GRAPH_SERIES = [["battery", "Battery"], ["forecast", "Forecast"], ["home", "Home"], ["grid", "Grid"], ["export", "Export"]];
+// added 2026-10-10 v1.8.0: the devices from the config — a list of { entity, name } (a bare entity id is accepted too)
+const deviceList = (c) => (Array.isArray(c.devices) ? c.devices : [])
+  .map((d) => (typeof d === "string" ? { entity: d } : d && typeof d === "object" ? { entity: d.entity, name: d.name } : null))
+  .filter((d) => d && typeof d.entity === "string" && d.entity);
 const unitSocIds = (c) => (Array.isArray(c.battery_unit_soc_entities) ? c.battery_unit_soc_entities : [c.battery_unit_soc_entities]).filter((x) => typeof x === "string" && x);
 
 // added 2026-10-10 v1.5.2: the colour the battery scale has at a charge level — the same stops as the bar's gradient: red up to
@@ -1183,7 +1191,10 @@ svg.tl text { font-family: inherit; }
 .tl-off { fill: #A5E6C8; font-size: 10px; } .tl-peak { fill: #F5B7A8; font-size: 10px; } .tl-std { fill: var(--secondary-text-color); font-size: 10px; }
 
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+/* [OLD 2026-10-10 v1.7.0->v1.8.0] Two columns once the card was 460 px wide or less.
 @container (max-width: 460px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+[/OLD] */
+/* v1.8.0: the column rules moved to the end of the styles (after the cell styles they override) */
 .tile { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--primary-text-color) 5%, transparent); min-width: 0; }
 .tile .tl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--secondary-text-color); }
 .tile .tv { font-size: 20px; font-weight: 500; white-space: nowrap; }
@@ -1236,6 +1247,30 @@ ha-card { --ewt-res-text: #EF5350; }
 ha-card.light { --ewt-res-text: #C62828; }
 .res { stroke: #E53935; }
 .soc-t.res-t { fill: var(--ewt-res-text); }
+/* added 2026-10-10 v1.8.0: the Devices cell, across the whole row of cells; a block per device in rows of three */
+.tile.devs { grid-column: 1 / -1; gap: 8px; }
+.tile .tl .tr { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tile .dvs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 18px; }
+.tile .dv { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tile .dv.off { opacity: 0.55; }
+.tile .dn { display: flex; gap: 6px; font-size: 11px; color: var(--secondary-text-color); }
+.tile .dn span:first-child { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .dn .dpc { font-variant-numeric: tabular-nums; }
+.tile .dp { font-size: 16px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tile .dv .uline { margin-top: 2px; }
+.tile .uline .fill.d { height: 100%; border-radius: 2px; background: #F48FB1; }
+.tile .pr { white-space: nowrap; }
+/* added 2026-10-10 v1.8.0: cells in rows of three down to a narrow phone; in a narrow card the cells get tighter and their small
+   lines wrap instead of being cut */
+@container (max-width: 560px) {
+  .tiles { gap: 8px; }
+  .tile { padding: 9px 10px; }
+  .tile .tv { font-size: 18px; }
+  .tile .ts { white-space: normal; }
+  .tile .row { gap: 8px; }
+  .tile .dvs { gap: 8px 12px; }
+}
+@container (max-width: 340px) { .tiles, .tile .dvs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* added 2026-10-10 v1.7.0: the chips under the graph that show or hide its series; each swatch is drawn like its series, and a
    hidden series' chip is faded with a grey swatch */
 .lg { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: -4px; }
@@ -1298,6 +1333,7 @@ const LABELS = {
   show_wind: "Wind row",
   show_tiles: "Summary tiles",
   show_toggles: "Graph toggles", // added 2026-10-10 v1.7.0
+  devices: "Devices", // added 2026-10-10 v1.8.0
   timeline_hours: "Timeline length", // added 2026-10-09 v1.1.0
   export_tariff: "Export tariff periods (optional)", // added 2026-10-09 v1.1.0
   show_storm_alert: "Storm alert", // added 2026-10-09 v1.1.0
@@ -1328,6 +1364,7 @@ const HELPERS = {
   export_tariff: "Same format as the import tariff periods, with your export rates. Example:\n- start: '16:00'\n  end: '19:00'\n  rate: 0.29\n  type: peak\nHours not listed use the standard export rate. Shown as a second band and used for today's income.", // added 2026-10-09 v1.1.0
   timeline_hours: "How many hours the timeline shows, with now always in the centre. Joins yesterday, today and tomorrow.", // added 2026-10-09 v1.1.0
   show_storm_alert: "A red label when the hourly forecast has thunder, hail, exceptional weather or storm-force wind in the next 24 hours.", // added 2026-10-09 v1.1.0
+  devices: "Each device's live power sensor (EV charger, heat pump …) and a name. Shown in a cell under the others with its share of the home's use right now. An empty name uses the sensor's own.", // added 2026-10-10 v1.8.0
   show_toggles: "Chips under the graph that show or hide the battery, forecast, home, grid and export lines. Each browser remembers its own choice.", // added 2026-10-10 v1.7.0
   export_rate_entity: "Your export price as an entity. Takes priority over the export tariff periods. Past hours come from its recorded history; upcoming hours from a rate list in its attributes, if it has one (Octopus Energy's export day-rates event, Nord Pool's raw_today/raw_tomorrow). Units such as GBP/kWh or p/kWh are converted.", // added 2026-10-09 v1.2.0
 };
@@ -1408,6 +1445,21 @@ class EnergyWeatherTimelineCard extends HTMLElement {
             { name: "grid_export_entity", selector: ENERGY_SENSOR },
             { name: "grid_power_entity", selector: POWER_SENSOR },
             { name: "grid_power_invert", selector: { boolean: {} } },
+          ],
+        },
+        { // added 2026-10-10 v1.8.0: devices with a live power sensor, each with a name
+          name: "devices_section", type: "expandable", flatten: true, title: "Devices",
+          schema: [
+            {
+              name: "devices",
+              selector: { object: {
+                multiple: true, label_field: "name", description_field: "entity",
+                fields: {
+                  entity: { label: "Power sensor", required: true, selector: { entity: { filter: { domain: "sensor", device_class: "power" } } } },
+                  name: { label: "Name", selector: { text: {} } },
+                },
+              } },
+            },
           ],
         },
         {
@@ -1607,6 +1659,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   }
   _entitiesChanged(a, b) {
     for (const id of this._entityIds()) if (a.states[id] !== b.states[id]) return true;
+    for (const d of deviceList(this._config || {})) if (a.states[d.entity] !== b.states[d.entity]) return true; // added 2026-10-10 v1.8.0
     return a.locale !== b.locale || a.config !== b.config || a.themes?.darkMode !== b.themes?.darkMode;
   }
 
@@ -3215,12 +3268,24 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     </div>`;
   }
   [/OLD] */
+  /* [OLD 2026-10-10 v1.7.0->v1.8.0] Small lines never wrapped, so a number and its unit could not be split.
   _tile(sw, label, value, s1, s2, valueHtml, s1Html) { // v1.4.0: s1Html (already escaped) for coloured dots
     return `<div class="tile">
       <div class="tl">${sw}<span>${esc(label)}</span></div>
       ${valueHtml || `<div class="tv">${esc(value)}</div>`}
       <div class="ts">${s1Html || esc(s1 || "")}&nbsp;</div>
       <div class="ts">${esc(s2 || "")}&nbsp;</div>
+    </div>`;
+  }
+  [/OLD] */
+  // v1.8.0: the small lines may wrap in a narrow cell, so a number is kept with its unit ("3.8 kWh", "2 h")
+  _tile(sw, label, value, s1, s2, valueHtml, s1Html) { // v1.4.0: s1Html (already escaped) for coloured dots
+    const nb = (t) => String(t || "").replace(/(\d) (?=(k?W|kWh|MWh|h|min)\b)/g, "$1\u00a0");
+    return `<div class="tile">
+      <div class="tl">${sw}<span>${esc(label)}</span></div>
+      ${valueHtml || `<div class="tv">${esc(value)}</div>`}
+      <div class="ts">${s1Html || esc(nb(s1))}&nbsp;</div>
+      <div class="ts">${esc(nb(s2))}&nbsp;</div>
     </div>`;
   }
 
@@ -3384,7 +3449,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         ? `<div class="bar split"><div class="fill b" style="width:${r1((imp / tot) * 100)}%"></div><div class="fill s" style="width:${r1((exp / tot) * 100)}%"></div></div>`
         : "";
       const valueHtml = `<div class="row"><span class="tv${earn ? " earn" : ""}">${esc(this._money(val))}</span>${bar}</div>`;
+      /* [OLD 2026-10-10 v1.7.0->v1.8.0] The dot could wrap away from its text in a narrow cell.
       const dot = (cls, text) => `<span class="dot ${cls}"></span>${esc(text)}`;
+      [/OLD] */
+      const dot = (cls, text) => `<span class="pr"><span class="dot ${cls}"></span>${esc(text)}</span>`; // v1.8.0: dot and text wrap as one
       const s1Html = both
         ? `${dot("b", `${this._money(imp)} bought`)}<span class="gap"></span>${dot("s", `${this._money(exp)} sold`)}`
         : imp != null ? dot("b", m.impToday != null ? `${this._kwh(m.impToday)} bought` : "bought")
@@ -3393,7 +3461,38 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     } else if (m.selfPowered != null) {
       t.push(this._tile(SW.cost, "Self-powered", `${Math.round(m.selfPowered * 100)}%`, "of home use from solar and battery", ""));
     }
+    const dv = this._devicesHtml(m); // added 2026-10-10 v1.8.0: the Devices cell, across the whole row
+    if (dv) t.push(dv); // added 2026-10-10 v1.8.0
     return t.length ? `<div class="tiles">${t.join("")}</div>` : "";
+  }
+
+  // added 2026-10-10 v1.8.0: one block per device — its name, live power, and a thin bar with its share of the home's use right now
+  // (no bar without a home power sensor). The header has the devices' total. A device below 5 W is shown faded;
+  // one whose sensor is unavailable shows a dash.
+  _devicesHtml(m) {
+    const list = deviceList(this._config);
+    if (!list.length) return "";
+    const home = m.homeNow != null && m.homeNow > 0.01 ? m.homeNow : null;
+    const pct = (kw) => Math.min(100, (kw / home) * 100);
+    let total = 0, known = 0;
+    const items = list.map((d) => {
+      const st = this._hass.states[d.entity];
+      const name = d.name || st?.attributes?.friendly_name || d.entity;
+      const kw = powerKW(st);
+      if (kw === null) {
+        return `<div class="dv off" title="${esc(d.entity)}: ${esc(st ? st.state : "not found")}"><div class="dn"><span>${esc(name)}</span></div>`
+          + `<div class="dp">—</div><div class="uline"></div></div>`;
+      }
+      const p = Math.max(0, kw);
+      total += p;
+      known++;
+      const share = home ? pct(p) : null;
+      return `<div class="dv${p < 0.005 ? " off" : ""}"><div class="dn"><span>${esc(name)}</span>${share != null ? `<span class="dpc">${Math.round(share)}%</span>` : ""}</div>`
+        + `<div class="dp">${this._power(p)}</div><div class="uline">${share != null ? `<div class="fill d" style="width:${r1(share)}%"></div>` : ""}</div></div>`;
+    });
+    const head = known ? `${this._power(total)}${home ? ` · ${Math.round(pct(total))}% of home` : ""}` : "";
+    return `<div class="tile devs"><div class="tl">${SW.dev}<span>Devices</span>${head ? `<span class="tr">${esc(head)}</span>` : ""}</div>`
+      + `<div class="dvs">${items.join("")}</div></div>`;
   }
 }
 

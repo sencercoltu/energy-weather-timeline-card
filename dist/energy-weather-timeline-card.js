@@ -45,7 +45,10 @@ const CARD_VERSION = "1.4.0";
 /* [OLD 2026-10-10 v1.5.0->v1.5.1] Version bump for the running hour of a meter that reset at midnight.
 const CARD_VERSION = "1.5.0";
 [/OLD] */
+/* [OLD 2026-10-10 v1.5.1->v1.5.2] Version bump for single-colour battery lines.
 const CARD_VERSION = "1.5.1";
+[/OLD] */
+const CARD_VERSION = "1.5.2";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -513,6 +516,24 @@ function saneFlow(arr, nI, at, unitKnown) {
 
 // added 2026-10-10 v1.5.0: the per-battery charge entities from the config (a list, or one id)
 const unitSocIds = (c) => (Array.isArray(c.battery_unit_soc_entities) ? c.battery_unit_soc_entities : [c.battery_unit_soc_entities]).filter((x) => typeof x === "string" && x);
+
+// added 2026-10-10 v1.5.2: the colour the battery scale has at a charge level — the same stops as the bar's gradient: red up to
+// the backup reserve, then yellow from reserve + 8 % (at most 60 %) to 60 %, then green from 76 %, blended in between
+const SOC_RED = [0xE5, 0x39, 0x35], SOC_YELLOW = [0xFB, 0xC0, 0x2D], SOC_GREEN = [0x4D, 0xD0, 0xA1];
+function socColour(v, reserve) {
+  const r = Math.max(0, Math.min(100, reserve || 0));
+  const stops = [[0, SOC_RED], [r, SOC_RED], [Math.min(60, r + 8), SOC_YELLOW], [60, SOC_YELLOW], [76, SOC_GREEN], [100, SOC_GREEN]];
+  let [p0, c0] = stops[0];
+  for (let i = 1; i < stops.length; i++) {
+    const p1 = Math.max(stops[i][0], p0), c1 = stops[i][1]; // like CSS, a stop never sits before the one ahead of it
+    if (v <= p1) {
+      const t = p1 > p0 ? Math.max(0, (v - p0) / (p1 - p0)) : 1;
+      return `rgb(${c0.map((a, k) => Math.round(a + (c1[k] - a) * t)).join(",")})`;
+    }
+    [p0, c0] = [p1, c1];
+  }
+  return `rgb(${SOC_GREEN.join(",")})`;
+}
 
 function smooth(pts, base, top) {
   const f = r1;
@@ -1176,6 +1197,7 @@ ha-card.light { --ewt-now: #2F64B0; --ewt-buy: #3F6FD8; --ewt-sell: #7E57C2; }
 .tile .uline { position: relative; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--primary-text-color) 15%, transparent); }
 .tile .fill.g { width: 100%; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #E53935 0%, #E53935 var(--r), #FBC02D var(--r2), #FBC02D 60%, #4DD0A1 76%, #4DD0A1 100%); }
 .tile .bar .fill.g { height: 5px; }
+.tile .uline .fill.u { height: 100%; border-radius: 2px; } /* added 2026-10-10 v1.5.2: single-colour battery line */
 .tile .uline .up { position: absolute; left: calc(100% + 6px); top: -4px; font-size: 9px; line-height: 11px; color: var(--secondary-text-color); white-space: nowrap; }
 .tile .rmark { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--primary-text-color); }
 `;
@@ -3194,7 +3216,11 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       const rr = res != null ? clamp(res) : 0;
       const fill = (v) => `<div class="fill g" style="clip-path:inset(0 ${r1(100 - clamp(v))}% 0 0 round 3px)"></div>`;
       const units = (m.units || []).filter((u) => u.soc !== null);
+      /* [OLD 2026-10-10 v1.5.1->v1.5.2] Lines showed the scale's gradient up to their charge.
       const lines = units.map((u) => `<div class="uline">${fill(u.soc)}<span class="up">${Math.round(u.soc)}%</span></div>`).join("");
+      [/OLD] */
+      // v1.5.2: each battery's line is one colour — the scale's colour at that battery's own charge
+      const lines = units.map((u) => `<div class="uline"><div class="fill u" style="width:${r1(clamp(u.soc))}%;background:${socColour(u.soc, rr)}"></div><span class="up">${Math.round(u.soc)}%</span></div>`).join("");
       const tip = units.map((u) => `${u.name} ${Math.round(u.soc)}%`).join(" · ");
       const valueHtml = `<div class="row"><span class="tv">${Math.round(soc)}%</span><div class="bars"${tip ? ` title="${esc(tip)}"` : ""}>`
         + `<div class="trk${units.length ? " u" : ""}" style="--r:${r1(rr)}%;--r2:${r1(Math.min(60, rr + 8))}%"><div class="bar">${fill(soc)}</div>${lines}`

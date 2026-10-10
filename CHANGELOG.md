@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.5.0
+- Battery tile: optional state of charge for each battery (main first, then expansions), drawn as thin lines with their percentages under the total charge bar. The bar and the lines share one colour scale: red up to the backup reserve, yellow to 60 %, green to 100 %, blended. The reserve mark runs through all of them.
+- The Now label is slightly see-through, and a sunrise or sunset close to now moves beside it instead of being hidden.
+
 ## v1.4.0
 - The kWh axis counts in round steps (0.5, 1, 2, 5, 10 … kWh) instead of odd maxima such as 6996 and 3498, with one grid line per step.
 - Hours a home can't produce (over 100 kWh in an hour) are caught: values that are really Wh are divided by 1000, and a lone spike from a meter that dropped to zero and came back is left out. The browser console names the sensor and the hours.

@@ -51,7 +51,10 @@ const CARD_VERSION = "1.5.1";
 /* [OLD 2026-10-10 v1.5.2->v1.6.0] Version bump for one battery colour scale on the tile and the graph, yellow up to 50 %.
 const CARD_VERSION = "1.5.2";
 [/OLD] */
+/* [OLD 2026-10-10 v1.6.0->v1.7.0] Version bump for the graph toggles and the Now label without the time.
 const CARD_VERSION = "1.6.0";
+[/OLD] */
+const CARD_VERSION = "1.7.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -518,6 +521,8 @@ function saneFlow(arr, nI, at, unitKnown) {
 }
 
 // added 2026-10-10 v1.5.0: the per-battery charge entities from the config (a list, or one id)
+// added 2026-10-10 v1.7.0: the graph series a chip can show or hide, in chip order: [key, label]
+const GRAPH_SERIES = [["battery", "Battery"], ["forecast", "Forecast"], ["home", "Home"], ["grid", "Grid"], ["export", "Export"]];
 const unitSocIds = (c) => (Array.isArray(c.battery_unit_soc_entities) ? c.battery_unit_soc_entities : [c.battery_unit_soc_entities]).filter((x) => typeof x === "string" && x);
 
 // added 2026-10-10 v1.5.2: the colour the battery scale has at a charge level — the same stops as the bar's gradient: red up to
@@ -1231,6 +1236,20 @@ ha-card { --ewt-res-text: #EF5350; }
 ha-card.light { --ewt-res-text: #C62828; }
 .res { stroke: #E53935; }
 .soc-t.res-t { fill: var(--ewt-res-text); }
+/* added 2026-10-10 v1.7.0: the chips under the graph that show or hide its series; each swatch is drawn like its series, and a
+   hidden series' chip is faded with a grey swatch */
+.lg { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: -4px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 12px; font: inherit; font-size: 11px; line-height: 16px; color: var(--primary-text-color); background: transparent; border: 1px solid color-mix(in srgb, var(--primary-text-color) 18%, transparent); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.chip:hover { background: color-mix(in srgb, var(--primary-text-color) 6%, transparent); }
+.chip:focus-visible { outline: 2px solid var(--ewt-now); outline-offset: 1px; }
+.chip[aria-pressed="false"] { opacity: 0.45; }
+.chip[aria-pressed="false"] .sw { filter: grayscale(1); }
+.chip .sw { display: inline-block; flex: none; width: 14px; height: 3px; border-radius: 2px; }
+.chip .sw.battery { height: 4px; background: linear-gradient(90deg, #E53935, #FBC02D 50%, #4DD0A1); }
+.chip .sw.forecast { height: 0; border-radius: 0; border-top: 2px dashed var(--primary-text-color); opacity: 0.85; }
+.chip .sw.home { background: #F48FB1; }
+.chip .sw.grid { background: #5B8DEF; }
+.chip .sw.export { width: 9px; height: 9px; background: color-mix(in srgb, #9575CD 70%, transparent); box-shadow: inset 0 0 0 1px #B39DDB; }
 .tile .uline .fill.u { height: 100%; border-radius: 2px; } /* added 2026-10-10 v1.5.2: single-colour battery line */
 .tile .uline .up { position: absolute; left: calc(100% + 6px); top: -4px; font-size: 9px; line-height: 11px; color: var(--secondary-text-color); white-space: nowrap; }
 .tile .rmark { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--primary-text-color); }
@@ -1278,6 +1297,7 @@ const LABELS = {
   show_humidity: "Humidity row",
   show_wind: "Wind row",
   show_tiles: "Summary tiles",
+  show_toggles: "Graph toggles", // added 2026-10-10 v1.7.0
   timeline_hours: "Timeline length", // added 2026-10-09 v1.1.0
   export_tariff: "Export tariff periods (optional)", // added 2026-10-09 v1.1.0
   show_storm_alert: "Storm alert", // added 2026-10-09 v1.1.0
@@ -1308,6 +1328,7 @@ const HELPERS = {
   export_tariff: "Same format as the import tariff periods, with your export rates. Example:\n- start: '16:00'\n  end: '19:00'\n  rate: 0.29\n  type: peak\nHours not listed use the standard export rate. Shown as a second band and used for today's income.", // added 2026-10-09 v1.1.0
   timeline_hours: "How many hours the timeline shows, with now always in the centre. Joins yesterday, today and tomorrow.", // added 2026-10-09 v1.1.0
   show_storm_alert: "A red label when the hourly forecast has thunder, hail, exceptional weather or storm-force wind in the next 24 hours.", // added 2026-10-09 v1.1.0
+  show_toggles: "Chips under the graph that show or hide the battery, forecast, home, grid and export lines. Each browser remembers its own choice.", // added 2026-10-10 v1.7.0
   export_rate_entity: "Your export price as an entity. Takes priority over the export tariff periods. Past hours come from its recorded history; upcoming hours from a rate list in its attributes, if it has one (Octopus Energy's export day-rates event, Nord Pool's raw_today/raw_tomorrow). Units such as GBP/kWh or p/kWh are converted.", // added 2026-10-09 v1.2.0
 };
 
@@ -1442,6 +1463,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
                 [/OLD] */
                 { name: "show_storm_alert", selector: { boolean: {} } },
                 { name: "show_tiles", selector: { boolean: {} } },
+                { name: "show_toggles", default: true, selector: { boolean: {} } }, // added 2026-10-10 v1.7.0
               ],
             },
           ],
@@ -1545,6 +1567,13 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     this._card = this.shadowRoot.querySelector("ha-card");
     this._root = this.shadowRoot.getElementById("root");
     this._root.style.display = "contents";
+    // added 2026-10-10 v1.7.0: a tap on a graph chip shows or hides that series
+    this._root.addEventListener("click", (e) => {
+      const chip = e.target && e.target.closest ? e.target.closest(".chip[data-s]") : null;
+      if (!chip) return;
+      e.stopPropagation();
+      this._toggleSeries(chip.dataset.s);
+    });
   }
 
   _start() {
@@ -2518,7 +2547,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const m = {
       uid: this._uid, span, wStart, k0, jNow, frac, now: kNow, nh,
       showHum: c.show_humidity !== false,
+      /* [OLD 2026-10-10 v1.6.0->v1.7.0] The Now label carried the time, which the clock above already shows.
       nowLabel: `Now ${this._fmtHM(now)}`,
+      [/OLD] */
+      nowLabel: "Now", // v1.7.0: the clock above already shows the time
       rateLabel: (s) => {
         const r = this._rateText(s.rate);
         if (s.plain) return r; // added 2026-10-09 v1.2.0: price-entity segments show the price only
@@ -2989,6 +3021,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       if (hasWx && m.showHum) steps.push(["noHum", 16]);
       if (m.rainMm) steps.push(["noRain", 28]);
       if (m.tariff || m.expTariff) steps.push(["noBands", 20 * ((m.tariff ? 1 : 0) + (m.expTariff ? 1 : 0))]);
+      const chipRow = this._root.querySelector(".lg"); // added 2026-10-10 v1.7.0
+      if (chipRow) steps.push(["noChips", chipRow.offsetHeight + gap]); // added 2026-10-10 v1.7.0
       if (tiles) steps.push(["noTiles", tiles.offsetHeight + gap]);
       if (hasWx) steps.push(["noWx", 62]);
       for (const [key, h] of steps) {
@@ -3031,7 +3065,16 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     if (m.storm) out.push(this._stormHtml(m.storm)); // added 2026-10-09 v1.1.0
 
     const anyData = m.solar || m.solarFc || m.home || m.imp || m.exp || m.soc || m.slots;
+    /* [OLD 2026-10-10 v1.6.0->v1.7.0] Every series was always drawn, and there were no chips.
     if (anyData) out.push(`<div class="chart">${chartSvg(W, m).svg}</div>`);
+    [/OLD] */
+    // v1.7.0: series hidden with the chips are left out of the graph only (the tiles still count them); chips under it
+    if (anyData) {
+      const cm = this._chartModel(m);
+      out.push(`<div class="chart">${chartSvg(W, cm).svg}</div>`);
+      m.plotScale = cm.plotScale;
+      if (!fo.noChips) out.push(this._chipsHtml(m));
+    }
     else if (!this._entityIds().length) out.push(`<div class="note">Open the card editor to choose your weather and energy entities.</div>`);
 
     if (m.flowNotes && m.flowNotes.length)
@@ -3044,6 +3087,59 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     [/OLD] */
     if (c.show_tiles !== false && !fo.noTiles) out.push(this._tilesHtml(m));
     return out.join("");
+  }
+
+  // added 2026-10-10 v1.7.0: the model the graph draws, without the series hidden with the chips
+  _chartModel(m) {
+    if (this._config.show_toggles === false) return m;
+    const h = this._hiddenSet();
+    if (!h.size) return m;
+    const cm = Object.assign({}, m);
+    if (h.has("battery")) cm.soc = null; // charge line, area, dot, reserve line and the % axis
+    if (h.has("forecast")) cm.solarFc = null;
+    if (h.has("home")) cm.home = null;
+    if (h.has("grid")) cm.imp = null;
+    if (h.has("export")) cm.exp = null;
+    return cm;
+  }
+
+  // added 2026-10-10 v1.7.0: one chip per graph series that has data, its swatch drawn like the series; tap to show or hide
+  _chipsHtml(m) {
+    if (this._config.show_toggles === false) return "";
+    const has = { battery: !!m.soc, forecast: !!m.solarFc, home: !!m.home, grid: !!m.imp, export: !!m.exp };
+    const h = this._hiddenSet();
+    const chips = GRAPH_SERIES.filter(([k]) => has[k]).map(([k, label]) => {
+      const on = !h.has(k);
+      return `<button type="button" class="chip" data-s="${k}" aria-pressed="${on}" title="${on ? "Hide" : "Show"} ${label.toLowerCase()} on the graph"><i class="sw ${k}"></i>${label}</button>`;
+    });
+    return chips.length ? `<div class="lg" role="group" aria-label="Show or hide on the graph">${chips.join("")}</div>` : "";
+  }
+
+  // added 2026-10-10 v1.7.0: hidden series are kept per browser, per set of entities (two cards with different entities keep their own)
+  _hiddenKey() {
+    let h = 5381;
+    for (const ch of this._entityIds().join("|")) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+    return `${CARD_TAG}:hidden:${h.toString(36)}`;
+  }
+
+  _hiddenSet() {
+    const key = this._hiddenKey();
+    if (this._hidden && this._hiddenFor === key) return this._hidden;
+    let list = [];
+    try { list = JSON.parse(localStorage.getItem(key) || "[]"); } catch (e) { list = []; }
+    const keys = GRAPH_SERIES.map(([k]) => k);
+    this._hidden = new Set(Array.isArray(list) ? list.filter((k) => keys.includes(k)) : []);
+    this._hiddenFor = key;
+    return this._hidden;
+  }
+
+  _toggleSeries(k) {
+    const h = this._hiddenSet();
+    if (h.has(k)) h.delete(k); else h.add(k);
+    try { localStorage.setItem(this._hiddenFor, JSON.stringify([...h])); } catch (e) { /* no storage (private mode): kept until the page reloads */ }
+    const refocus = this.shadowRoot.activeElement?.dataset?.s === k;
+    this._render();
+    if (refocus) this._root.querySelector(`.chip[data-s="${k}"]`)?.focus();
   }
 
   _clockHtml(m) {

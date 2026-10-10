@@ -68,7 +68,7 @@ Any hour not listed uses **Standard export rate**. When export periods are set, 
 
 **Export price entity.** If your export price lives in its own entity, pick it under **Tariff and cost**; it takes priority over the export periods. Past hours come from its recorded history. Upcoming hours come from a list of rates in its attributes, if it has one, for example Octopus Energy's *export current day rates* event or Nord Pool's `raw_today` / `raw_tomorrow`. Without such a list, the Sell band stops after the current rate period. Units such as GBP/kWh and p/kWh are converted, and the browser console (F12) says which parts of the entity were used.
 
-**Timeline length** (under **Show or hide**) is 24, 36 or 48 hours, with now always in the centre. The past half comes from your history, reaching back into yesterday; the future half comes from the weather and solar forecasts, reaching into tomorrow. Each midnight is marked with the day's name. The blue **Now** label and every sunrise and sunset in view are marked at the top.
+**Timeline length** (under **Show or hide**) is 24, 36 or 48 hours, with now always in the centre. The past half comes from your history, reaching back into yesterday; the future half comes from the weather and solar forecasts, reaching into tomorrow. Each midnight is marked with the day's name. The blue **Now** label and every sunrise and sunset in view are marked at the top; a sunrise or sunset next to now moves beside the label instead of hiding under it.
 
 ## What each entity needs
 
@@ -100,6 +100,9 @@ grid_export_entity: sensor.powerwall_grid_export
 grid_power_entity: sensor.powerwall_site_power
 battery_name: Powerwall
 battery_soc_entity: sensor.powerwall_charge
+battery_unit_soc_entities:   # optional: main battery first, then expansions
+  - sensor.powerwall_battery_1_charge
+  - sensor.powerwall_battery_2_charge
 battery_power_entity: sensor.powerwall_battery_power
 battery_capacity: 27
 battery_reserve: 20
@@ -121,6 +124,7 @@ timeline_hours: "24"
 - **Cost and income are approximate.** Both are worked out per hour: price entities at the average of the hour's two half hours, tariff periods at the rate in force at the middle of the hour. A tariff period that changes on a half hour (00:30, 05:30) will be a few pence off your bill. The money tile shows the net amount ("Net cost", or "Net earnings" in green when export income is larger), then what you bought and sold, with a bar splitting the two, and the self-powered share.
 - **Self-powered %** is the share of home use not covered directly by grid import in each hour. That's close to how the Tesla app reports it.
 - **The running hour** is shown dashed. Its value comes from the live meter reading, so it updates as you watch.
+- **Battery tile.** The big number and the bar are the total charge. If you pick **Each battery's state of charge** (main battery first, then each expansion), each battery gets a thin line under the bar with its percentage; hover for the names. The bar and lines share one colour scale (red up to the backup reserve, yellow to 60 %, green to 100 %), and the reserve mark runs through all of them. Without a total charge entity, the average of the batteries is shown.
 - **Battery time left** needs **Usable battery capacity**. Discharging: time until the backup reserve, and the clock time. Charging: time until full. Idle or full: how long it would last at the current home use. Anything over two days shows as "2+ days".
 - **Storm alert.** A red label appears when the hourly forecast for the next 24 hours has thunder, hail or exceptional weather, or gusts of 75 km/h (or a mean wind of 55 km/h) and above. The affected hours are marked red on the timeline. Turn it off with **Storm alert** under **Show or hide**.
 - **Light themes** are supported; the card switches its night shading and icon colours automatically.

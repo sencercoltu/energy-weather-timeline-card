@@ -57,7 +57,10 @@ const CARD_VERSION = "1.6.0";
 /* [OLD 2026-10-10 v1.7.0->v1.8.0] Version bump for cells in rows of three and the Devices cell.
 const CARD_VERSION = "1.7.0";
 [/OLD] */
+/* [OLD 2026-10-11 v1.8.0->v1.9.0] Version bump for the standing charge, colours, padding, inner % labels and the weather in the time row.
 const CARD_VERSION = "1.8.0";
+[/OLD] */
+const CARD_VERSION = "1.9.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -256,14 +259,25 @@ const iconSvg = (cond, night, size) =>
 
 /* Legend swatches used by the tiles */
 const SW = {
+  /* [OLD 2026-10-11 v1.8.0->v1.9.0] Fixed colours.
   solar: `<svg width="10" height="12" viewBox="0 0 12 14" aria-hidden="true"><rect x="1" y="1" width="10" height="12" rx="2" style="fill:#FF9800;fill-opacity:.6;stroke:#FFA726"/></svg>`,
   fc: `<svg width="16" height="4" viewBox="0 0 18 4" aria-hidden="true"><path d="M0,2H18" class="sw-fc"/></svg>`,
   home: `<svg width="16" height="4" viewBox="0 0 18 4" aria-hidden="true"><path d="M0,2H18" style="stroke:#F48FB1;stroke-width:2.5"/></svg>`,
   grid: `<svg width="16" height="4" viewBox="0 0 18 4" aria-hidden="true"><path d="M0,2H18" style="stroke:#5B8DEF;stroke-width:2.5"/></svg>`,
   exp: `<svg width="8" height="10" viewBox="0 0 8 10" aria-hidden="true"><rect x=".5" y=".5" width="7" height="9" rx="1.5" style="fill:#9575CD;fill-opacity:.7;stroke:#B39DDB"/></svg>`,
+  [/OLD] */
+  // v1.9.0: the swatches take the series colours (CSS variables, set from the editor's Colours section)
+  solar: `<svg width="10" height="12" viewBox="0 0 12 14" aria-hidden="true"><rect x="1" y="1" width="10" height="12" rx="2" style="fill:var(--ewt-c-solar);fill-opacity:.6;stroke:var(--ewt-c-solar-edge)"/></svg>`,
+  fc: `<svg width="16" height="4" viewBox="0 0 18 4" aria-hidden="true"><path d="M0,2H18" class="sw-fc"/></svg>`,
+  home: `<svg width="16" height="4" viewBox="0 0 18 4" aria-hidden="true"><path d="M0,2H18" style="stroke:var(--ewt-c-home);stroke-width:2.5"/></svg>`,
+  grid: `<svg width="16" height="4" viewBox="0 0 18 4" aria-hidden="true"><path d="M0,2H18" style="stroke:var(--ewt-c-grid);stroke-width:2.5"/></svg>`,
+  exp: `<svg width="8" height="10" viewBox="0 0 8 10" aria-hidden="true"><rect x=".5" y=".5" width="7" height="9" rx="1.5" style="fill:var(--ewt-c-exp);fill-opacity:.7;stroke:var(--ewt-c-exp-edge)"/></svg>`,
   soc: `<svg width="12" height="10" viewBox="0 0 14 12" aria-hidden="true"><path d="M1,11V6Q4,2 7,4T13,2V11Z" style="fill:#4DD0A1;fill-opacity:.25;stroke:#4DD0A1;stroke-width:1.5"/></svg>`,
   cost: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.8" class="sw-cost"/></svg>`,
+  /* [OLD 2026-10-11 v1.8.0->v1.9.0] Fixed pink.
   dev: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.2,1V3.6M7.8,1V3.6M2.6,3.6H9.4V6A3.4,3.4 0 0 1 2.6,6ZM6,9.4V11.3" style="fill:none;stroke:#F48FB1;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round"/></svg>`, // added 2026-10-10 v1.8.0
+  [/OLD] */
+  dev: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.2,1V3.6M7.8,1V3.6M2.6,3.6H9.4V6A3.4,3.4 0 0 1 2.6,6ZM6,9.4V11.3" style="fill:none;stroke:var(--ewt-c-home);stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round"/></svg>`, // v1.9.0: home colour
 };
 
 /* ------------------------------------------------------------------ */
@@ -393,6 +407,23 @@ const rateFactor = (unit) => {
   let f = /^(p|c|ct|¢|cents?|pence)\s*\//i.test(u) || /^GBp\b/.test(u) ? 0.01 : 1;
   if (/mwh/i.test(u)) f /= 1000;
   return f;
+};
+// added 2026-10-11 v1.9.0: a standing charge entity's state as currency per day. Pence or cents per day are divided by 100;
+// so is a bare number of 10 or more with no unit, since a daily standing charge is never that many pounds or euros.
+const standingCharge = (st) => {
+  const v = num(st?.state);
+  if (v === null) return null;
+  const u = String(st.attributes?.unit_of_measurement || "").trim();
+  const minor = /^(?:¢|(?:p|c|ct|cents?|pence)\b)/i.test(u) || /^GBp\b/.test(u) || (!u && v >= 10);
+  return minor ? v / 100 : v;
+};
+// added 2026-10-11 v1.9.0: a colour from the config as CSS — [r, g, b] from the editor's colour picker, or a CSS colour typed in YAML
+const colourCss = (v) => {
+  if (Array.isArray(v) && v.length >= 3 && v.slice(0, 3).every((x) => Number.isFinite(+x)))
+    return `rgb(${v.slice(0, 3).map((x) => Math.max(0, Math.min(255, Math.round(+x)))).join(", ")})`;
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(t) || /^(?:rgb|hsl)a?\([\d\s.,%/+-]+\)$/i.test(t) || /^[a-z]{3,20}$/i.test(t) ? t : null;
 };
 const RATE_TIME_KEYS = ["start", "from", "valid_from", "period_start", "start_time", "datetime", "time", "begin"];
 const RATE_END_KEYS = ["end", "to", "valid_to", "period_end", "end_time", "until"];
@@ -784,7 +815,10 @@ function chartSvg(W, m) {
 // 24 and up = tomorrow). Arrays in the model start at hour m.k0; m.wStart and m.span give the visible range.
 function chartSvg(W, m) {
   const f = r1;
+/* [OLD 2026-10-11 v1.8.0->v1.9.0] A 40 px right margin held the battery % labels.
   const L = 30, R = m.soc ? 40 : 14;
+[/OLD] */
+  const L = 30, R = 14; // v1.9.0: the battery % labels sit inside the plot, so no margin for them
   const iw = Math.max(60, W - L - R);
   const right = L + iw;
   const X = (h) => L + ((h - m.wStart) / m.span) * iw;
@@ -1002,7 +1036,17 @@ function chartSvg(W, m) {
   if (kNeg) kt.push(-kNeg);
   for (const v of kt) P.push(`<text class="t11" x="${L - 6}" y="${f(Y(v) + 4)}" text-anchor="end">${fmtTick(big ? v / 1000 : v)}</text>`);
   if (m.soc) {
+    /* [OLD 2026-10-11 v1.8.0->v1.9.0] The % labels sat outside the plot, right of it.
     for (const p of [100, 50, 0]) P.push(`<text class="soc-t" x="${f(right + 6)}" y="${f(YS(p) + 4)}">${p}%</text>`);
+    [/OLD] */
+    // v1.9.0: the % labels sit inside the plot, right-aligned against its right edge: 100 % just under its level, 50 % and
+    // 0 % just over theirs; one that would touch the reserve label is left out
+    const resY = m.reserve != null ? YS(m.reserve) - 5 : null;
+    for (const p of [100, 50, 0]) {
+      const y = p === 100 ? YS(p) + 12 : YS(p) - 4;
+      if (resY !== null && Math.abs(y - resY) < 12) continue;
+      P.push(`<text class="soc-t in" x="${f(right - 4)}" y="${f(y)}" text-anchor="end">${p}%</text>`);
+    }
     /* [OLD 2026-10-10 v1.5.2->v1.6.0] The reserve label was green.
     if (m.reserve != null) P.push(`<text class="soc-t small" x="${f(right - 4)}" y="${f(YS(m.reserve) - 5)}" text-anchor="end">Reserve ${Math.round(m.reserve)}%</text>`);
     [/OLD] */
@@ -1288,6 +1332,36 @@ ha-card.light { --ewt-res-text: #C62828; }
 .tile .uline .fill.u { height: 100%; border-radius: 2px; } /* added 2026-10-10 v1.5.2: single-colour battery line */
 .tile .uline .up { position: absolute; left: calc(100% + 6px); top: -4px; font-size: 9px; line-height: 11px; color: var(--secondary-text-color); white-space: nowrap; }
 .tile .rmark { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--primary-text-color); }
+/* added 2026-10-11 v1.9.0: series colours as variables — the editor's Colours section sets them on the card */
+ha-card {
+  --ewt-c-solar: #FF9800; --ewt-c-solar-edge: #FFA726; --ewt-c-fc: var(--primary-text-color); --ewt-c-home: #F48FB1;
+  --ewt-c-grid: #5B8DEF; --ewt-c-exp: #9575CD; --ewt-c-exp-edge: #B39DDB;
+  --ewt-halo: var(--ha-card-background, var(--card-background-color, #1C1C1C));
+}
+.sol { fill: var(--ewt-c-solar); stroke: var(--ewt-c-solar-edge); }
+.exp { fill: var(--ewt-c-exp); stroke: var(--ewt-c-exp-edge); }
+.fc, .sw-fc { stroke: var(--ewt-c-fc); }
+.imp { stroke: var(--ewt-c-grid); }
+.home { stroke: var(--ewt-c-home); }
+.e-std, .e-off { fill: var(--ewt-c-exp); }
+.e-peak { fill: color-mix(in srgb, var(--ewt-c-exp) 62%, #000); }
+.tile .uline .fill.d, .chip .sw.home { background: var(--ewt-c-home); }
+.chip .sw.grid { background: var(--ewt-c-grid); }
+.chip .sw.export { background: color-mix(in srgb, var(--ewt-c-exp) 70%, transparent); box-shadow: inset 0 0 0 1px var(--ewt-c-exp-edge); }
+.chip .sw.forecast { border-top-color: var(--ewt-c-fc); }
+/* added 2026-10-11 v1.9.0: the battery % labels inside the plot get a halo in the card colour so lines under them don't cut them */
+.soc-t.in, .soc-t.res-t { paint-order: stroke; stroke: var(--ewt-halo); stroke-width: 3px; stroke-linejoin: round; }
+/* added 2026-10-11 v1.9.0: the standing charge in the money cell */
+.tile .dot.st { background: var(--secondary-text-color); }
+.bar.split .fill.st { background: color-mix(in srgb, var(--secondary-text-color) 75%, transparent); }
+/* added 2026-10-11 v1.9.0: the current weather in the time row — icon, big temperature, and short lines beside it */
+.clock-row { flex-wrap: wrap; row-gap: 10px; }
+.clock-row.has-wx { column-gap: clamp(10px, 3cqi, 18px); }
+.clock-row.has-wx .time { font-size: clamp(36px, 9.4cqi, 58px); }
+.wx { display: flex; align-items: center; gap: 6px; }
+.wx > svg { flex: none; width: clamp(26px, 6.4cqi, 38px); height: clamp(26px, 6.4cqi, 38px); }
+.wx .wt { font-size: clamp(28px, 7.4cqi, 44px); font-weight: 500; letter-spacing: -1px; line-height: 1; white-space: nowrap; }
+.wx .wd { display: flex; flex-direction: column; gap: 2px; margin-left: 4px; font-size: clamp(11px, 2.6cqi, 13px); line-height: 1.25; color: var(--secondary-text-color); white-space: nowrap; }
 `;
 
 /* ------------------------------------------------------------------ */
@@ -1334,6 +1408,13 @@ const LABELS = {
   show_tiles: "Summary tiles",
   show_toggles: "Graph toggles", // added 2026-10-10 v1.7.0
   devices: "Devices", // added 2026-10-10 v1.8.0
+  standing_charge_entity: "Standing charge entity (optional)", // added 2026-10-11 v1.9.0
+  card_padding: "Padding inside the card", // added 2026-10-11 v1.9.0
+  solar_color: "Solar", // added 2026-10-11 v1.9.0
+  forecast_color: "Solar forecast", // added 2026-10-11 v1.9.0
+  home_color: "Home and devices", // added 2026-10-11 v1.9.0
+  grid_color: "Grid import", // added 2026-10-11 v1.9.0
+  export_color: "Export", // added 2026-10-11 v1.9.0
   timeline_hours: "Timeline length", // added 2026-10-09 v1.1.0
   export_tariff: "Export tariff periods (optional)", // added 2026-10-09 v1.1.0
   show_storm_alert: "Storm alert", // added 2026-10-09 v1.1.0
@@ -1365,6 +1446,9 @@ const HELPERS = {
   timeline_hours: "How many hours the timeline shows, with now always in the centre. Joins yesterday, today and tomorrow.", // added 2026-10-09 v1.1.0
   show_storm_alert: "A red label when the hourly forecast has thunder, hail, exceptional weather or storm-force wind in the next 24 hours.", // added 2026-10-09 v1.1.0
   devices: "Each device's live power sensor (EV charger, heat pump …) and a name. Shown in a cell under the others with its share of the home's use right now. An empty name uses the sensor's own.", // added 2026-10-10 v1.8.0
+  standing_charge_entity: "Your daily standing charge, for example Octopus Energy's current standing charge sensor. Added in full to today's cost. Pence or cents per day are converted.", // added 2026-10-11 v1.9.0
+  card_padding: "Space between the card's edge and its content. 20 px if left empty.", // added 2026-10-11 v1.9.0
+  solar_color: "Each colour is used on the graph, its chip and its cell. To go back to the default, delete the line in the code editor.", // added 2026-10-11 v1.9.0
   show_toggles: "Chips under the graph that show or hide the battery, forecast, home, grid and export lines. Each browser remembers its own choice.", // added 2026-10-10 v1.7.0
   export_rate_entity: "Your export price as an entity. Takes priority over the export tariff periods. Past hours come from its recorded history; upcoming hours from a rate list in its attributes, if it has one (Octopus Energy's export day-rates event, Nord Pool's raw_today/raw_tomorrow). Units such as GBP/kWh or p/kWh are converted.", // added 2026-10-09 v1.2.0
 };
@@ -1488,6 +1572,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
             },
             { name: "export_tariff", selector: { object: {} } }, // added 2026-10-09 v1.1.0
             { name: "import_rate_entity", selector: { entity: { filter: { domain: "sensor" } } } },
+            { name: "standing_charge_entity", selector: { entity: { filter: [{ domain: "sensor" }, { domain: "number" }, { domain: "input_number" }] } } }, // added 2026-10-11 v1.9.0
             { name: "export_rate_entity", selector: { entity: { filter: [{ domain: "sensor" }, { domain: "event" }, { domain: "number" }, { domain: "input_number" }] } } }, // added 2026-10-09 v1.2.0
             { name: "currency", selector: { text: {} } },
           ],
@@ -1516,6 +1601,22 @@ class EnergyWeatherTimelineCard extends HTMLElement {
                 { name: "show_storm_alert", selector: { boolean: {} } },
                 { name: "show_tiles", selector: { boolean: {} } },
                 { name: "show_toggles", default: true, selector: { boolean: {} } }, // added 2026-10-10 v1.7.0
+              ],
+            },
+          ],
+        },
+        { // added 2026-10-11 v1.9.0: padding and the series colours
+          name: "look", type: "expandable", flatten: true, title: "Colours and spacing",
+          schema: [
+            { name: "card_padding", selector: { number: { min: 0, max: 40, step: 1, mode: "slider", unit_of_measurement: "px" } } },
+            {
+              name: "", type: "grid", flatten: true,
+              schema: [
+                { name: "solar_color", selector: { color_rgb: {} } },
+                { name: "forecast_color", selector: { color_rgb: {} } },
+                { name: "home_color", selector: { color_rgb: {} } },
+                { name: "grid_color", selector: { color_rgb: {} } },
+                { name: "export_color", selector: { color_rgb: {} } },
               ],
             },
           ],
@@ -1660,6 +1761,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   _entitiesChanged(a, b) {
     for (const id of this._entityIds()) if (a.states[id] !== b.states[id]) return true;
     for (const d of deviceList(this._config || {})) if (a.states[d.entity] !== b.states[d.entity]) return true; // added 2026-10-10 v1.8.0
+    const sc = this._config?.standing_charge_entity; // added 2026-10-11 v1.9.0
+    if (sc && a.states[sc] !== b.states[sc]) return true; // added 2026-10-11 v1.9.0
     return a.locale !== b.locale || a.config !== b.config || a.themes?.darkMode !== b.themes?.darkMode;
   }
 
@@ -2883,6 +2986,12 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       }
       if (okI || okE) m.cost = { imp: okI ? ci : null, exp: okE ? ce : null, net: ci - ce };
     }
+    // added 2026-10-11 v1.9.0: the day's standing charge, from an entity, counts in full towards today's cost
+    const std = standingCharge(S(c.standing_charge_entity));
+    if (std !== null) {
+      if (m.cost) { m.cost.std = std; m.cost.net += std; }
+      else m.cost = { imp: null, exp: null, std, net: std };
+    }
     if (dHome && dImp && m.homeToday > 0) {
       let fromGrid = 0;
       for (let h = 0; h <= nh; h++) fromGrid += Math.min(dImp[h] || 0, dHome[h] || 0);
@@ -3019,8 +3128,34 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   /* ---------- rendering ---------- */
 
   _chartWidth() {
+    /* [OLD 2026-10-11 v1.8.0->v1.9.0] Assumed 20 px padding on each side.
     const w = this._card ? this._card.clientWidth - 40 : 0;
+    [/OLD] */
+    const w = this._card ? this._card.clientWidth - 2 * this._pad() : 0; // v1.9.0: the padding can be set
     return w > 0 ? w : 598;
+  }
+
+  // added 2026-10-11 v1.9.0: the padding inside the card (px, default 20)
+  _pad() {
+    const v = num(this._config?.card_padding);
+    return v === null ? 20 : Math.max(0, Math.min(48, v));
+  }
+
+  // added 2026-10-11 v1.9.0: the padding and the editor's colours, as inline styles on the card (they override the stylesheet). The
+  // grid colour also colours "bought" in the money cell, the export colour "sold" and the export label.
+  _applyLook() {
+    const c = this._config, st = this._card && this._card.style;
+    if (!st) return;
+    const set = (name, v) => (v ? st.setProperty(name, v) : st.removeProperty(name));
+    const solar = colourCss(c.solar_color), fc = colourCss(c.forecast_color), home = colourCss(c.home_color);
+    const grid = colourCss(c.grid_color), exp = colourCss(c.export_color);
+    set("--ewt-c-solar", solar); set("--ewt-c-solar-edge", solar);
+    set("--ewt-c-fc", fc);
+    set("--ewt-c-home", home);
+    set("--ewt-c-grid", grid); set("--ewt-buy", grid);
+    set("--ewt-c-exp", exp); set("--ewt-c-exp-edge", exp); set("--ewt-sell", exp); set("--ewt-exp-text", exp);
+    const p = this._pad();
+    st.padding = num(c.card_padding) === null ? "" : `${p}px ${p}px ${Math.max(0, p - 2)}px`;
   }
 
   _scheduleRender() {
@@ -3031,6 +3166,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
 
   _render() {
     if (!this._root || !this._hass || !this._config) return;
+    this._applyLook(); // added 2026-10-11 v1.9.0: padding and colours before measuring
     const W = this._chartWidth();
     this._width = W;
     if (this._card) this._card.classList.toggle("light", this._hass.themes?.darkMode === false);
@@ -3199,6 +3335,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const p = this._clockParts(Date.now());
     const sec = this._config.show_seconds !== false ? `<span class="sec">${p.sec}</span>` : "";
     const ap = p.ap ? `<span class="ap">${p.ap}</span>` : "";
+    /* [OLD 2026-10-11 v1.8.0->v1.9.0] The current weather was a separate line under the time.
     let cond = "";
     if (m.cur) {
       const bits = [esc(m.cur.condText)];
@@ -3212,6 +3349,27 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         <div class="date"><span class="day">${esc(p.day)}</span><span class="dm">${esc(p.dm)}</span></div>
         <div class="time"><span class="hm">${p.hm}</span>${sec}${ap}</div>
       </div>${cond}</div>`;
+    [/OLD] */
+    // v1.9.0: the current weather joins the time row: icon and a big temperature, then the condition, humidity (with
+    // this hour's chance of rain when the forecast has one) and wind as short lines beside it. The row wraps, weather
+    // under the time, when the card is too narrow for both.
+    let wx = "";
+    if (m.cur) {
+      const lines = [esc(m.cur.condText)];
+      const rain = m.rainProb && m.jNow != null ? m.rainProb[m.jNow] : null;
+      const mid = [];
+      if (m.cur.hum !== null) mid.push(`${Math.round(m.cur.hum)}% RH`);
+      if (rain != null && rain > 0) mid.push(`${Math.round(rain)}% rain`);
+      if (mid.length) lines.push(mid.join(" · "));
+      if (m.cur.ws !== null) lines.push(`${Math.round(m.cur.ws)} ${esc(m.cur.wsUnit)}${m.cur.wb !== null ? ` ${compass(m.cur.wb)}` : ""}`);
+      const temp = m.cur.temp !== null ? `<span class="wt">${r1(m.cur.temp)}°</span>` : "";
+      wx = `<div class="wx">${iconSvg(m.cur.cond, m.cur.night, 34)}${temp}<div class="wd">${lines.map((l) => `<span>${l}</span>`).join("")}</div></div>`;
+    }
+    return `<div class="clock">
+      <div class="clock-row${wx ? " has-wx" : ""}">
+        <div class="date"><span class="day">${esc(p.day)}</span><span class="dm">${esc(p.dm)}</span></div>
+        <div class="time"><span class="hm">${p.hm}</span>${sec}${ap}</div>${wx}
+      </div></div>`;
   }
 
   _warning() {
@@ -3439,6 +3597,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     [/OLD] */
     // v1.4.0: the money tile names each figure once — net in the title, then bought (import) and sold (export)
     // in the timeline's colours, with a bar splitting the two
+    /* [OLD 2026-10-11 v1.8.0->v1.9.0] No standing charge.
     if (m.cost) {
       const imp = m.cost.imp, exp = m.cost.exp, both = imp != null && exp != null;
       const earn = both ? m.cost.net < -0.005 : imp == null;
@@ -3451,13 +3610,36 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       const valueHtml = `<div class="row"><span class="tv${earn ? " earn" : ""}">${esc(this._money(val))}</span>${bar}</div>`;
       /* [OLD 2026-10-10 v1.7.0->v1.8.0] The dot could wrap away from its text in a narrow cell.
       const dot = (cls, text) => `<span class="dot ${cls}"></span>${esc(text)}`;
-      [/OLD] */
+      [/OLD] *\/
       const dot = (cls, text) => `<span class="pr"><span class="dot ${cls}"></span>${esc(text)}</span>`; // v1.8.0: dot and text wrap as one
       const s1Html = both
         ? `${dot("b", `${this._money(imp)} bought`)}<span class="gap"></span>${dot("s", `${this._money(exp)} sold`)}`
         : imp != null ? dot("b", m.impToday != null ? `${this._kwh(m.impToday)} bought` : "bought")
         : dot("s", m.expToday != null ? `${this._kwh(m.expToday)} sold` : "sold");
       t.push(this._tile(SW.cost, label, "", "", m.selfPowered != null ? `${Math.round(m.selfPowered * 100)}% self-powered` : "", valueHtml, s1Html));
+    [/OLD] */
+    // v1.9.0: a standing charge counts with what was bought (both are paid) against what was sold; the bar splits all
+    // three, and each has its dot: bought, standing, sold
+    if (m.cost) {
+      const imp = m.cost.imp, exp = m.cost.exp, std = m.cost.std ?? null;
+      const hasOut = imp != null || std != null, both = hasOut && exp != null;
+      const out = (imp || 0) + (std || 0);
+      const earn = both ? m.cost.net < -0.005 : !hasOut;
+      const label = both ? (earn ? "Net earnings" : "Net cost") : hasOut ? "Grid cost" : "Export income";
+      const val = both ? Math.abs(m.cost.net) : hasOut ? out : exp;
+      const tot = out + (exp || 0);
+      const segs = [["b", imp], ["st", std], ["s", exp]].filter(([, v]) => v != null);
+      const bar = segs.length > 1 && tot > 0
+        ? `<div class="bar split">${segs.map(([k, v]) => `<div class="fill ${k}" style="width:${r1((Math.max(0, v) / tot) * 100)}%"></div>`).join("")}</div>`
+        : "";
+      const valueHtml = `<div class="row"><span class="tv${earn ? " earn" : ""}">${esc(this._money(val))}</span>${bar}</div>`;
+      const dot = (cls, text) => `<span class="pr"><span class="dot ${cls}"></span>${esc(text)}</span>`;
+      const many = segs.length > 1; // with one figure only, it is the headline, so its line gives the kWh instead
+      const parts = [];
+      if (imp != null) parts.push(dot("b", many ? `${this._money(imp)} bought` : m.impToday != null ? `${this._kwh(m.impToday)} bought` : "bought"));
+      if (std != null) parts.push(dot("st", many ? `${this._money(std)} standing` : "standing charge"));
+      if (exp != null) parts.push(dot("s", many ? `${this._money(exp)} sold` : m.expToday != null ? `${this._kwh(m.expToday)} sold` : "sold"));
+      t.push(this._tile(SW.cost, label, "", "", m.selfPowered != null ? `${Math.round(m.selfPowered * 100)}% self-powered` : "", valueHtml, parts.join(`<span class="gap"></span>`)));
     } else if (m.selfPowered != null) {
       t.push(this._tile(SW.cost, "Self-powered", `${Math.round(m.selfPowered * 100)}%`, "of home use from solar and battery", ""));
     }

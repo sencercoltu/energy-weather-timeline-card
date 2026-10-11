@@ -2,8 +2,8 @@
 
 A Home Assistant dashboard card with:
 
-- a clock
-- current weather, a weather-warning banner and a red storm alert
+- a clock with the current weather beside it: a big temperature, the condition, humidity, chance of rain and wind
+- a weather-warning banner and a red storm alert
 - one sliding timeline with now always in the centre, joining yesterday, today and tomorrow: hourly weather, solar production and forecast, home use, grid import/export, battery charge with backup reserve, import and export tariff periods, rain, humidity and UV
 - six summary tiles underneath, including the battery's time left and today's import cost and export income
 
@@ -36,7 +36,7 @@ After either install, edit a dashboard → **Add card** → **Energy & Weather T
 
 ## Visual editor
 
-Every option is in the card editor, grouped into **Clock and weather**, **Solar**, **Home and grid**, **Battery**, **Tariff and cost** and **Show or hide**. Leave out any entity you don't have, and the parts of the card that need it will hide themselves.
+Every option is in the card editor, grouped into **Clock and weather**, **Solar**, **Home and grid**, **Devices**, **Battery**, **Tariff and cost**, **Show or hide** and **Colours and spacing**. Leave out any entity you don't have, and the parts of the card that need it will hide themselves.
 
 The tariff periods use a small YAML box inside the editor:
 
@@ -68,11 +68,15 @@ Any hour not listed uses **Standard export rate**. When export periods are set, 
 
 **Export price entity.** If your export price lives in its own entity, pick it under **Tariff and cost**; it takes priority over the export periods. Past hours come from its recorded history. Upcoming hours come from a list of rates in its attributes, if it has one, for example Octopus Energy's *export current day rates* event or Nord Pool's `raw_today` / `raw_tomorrow`. Without such a list, the Sell band stops after the current rate period. Units such as GBP/kWh and p/kWh are converted, and the browser console (F12) says which parts of the entity were used.
 
+**Standing charge.** Pick your daily standing charge entity under **Tariff and cost**, for example Octopus Energy's *current standing charge* sensor. It is added in full to today's cost and shown as its own grey line (and bar segment) in the money cell, between bought and sold. Pence or cents per day are converted; a bare number of 10 or more with no unit is taken as pence or cents.
+
 **Timeline length** (under **Show or hide**) is 24, 36 or 48 hours, with now always in the centre. The past half comes from your history, reaching back into yesterday; the future half comes from the weather and solar forecasts, reaching into tomorrow. Each midnight is marked with the day's name. The blue **Now** label and every sunrise and sunset in view are marked at the top; a sunrise or sunset next to now moves beside the label instead of hiding under it.
 
 **Graph toggles.** Chips under the graph show or hide **Battery** (the charge line and the reserve line), **Forecast**, **Home**, **Grid** (import) and **Export**; tap one to switch it. The kWh axis fits what is shown, and the summary tiles still count everything. Each browser remembers its own choice, so a wall tablet and your phone can show different lines. Turn the chips off with **Graph toggles** under **Show or hide**; the graph then shows every line.
 
 **Devices.** Under **Devices**, add each appliance that has a live power sensor (an EV charger, a heat pump …) and give it a name; an empty name uses the sensor's own. They appear in one cell across the full width, under the summary cells: each with its power now and a bar with its share of the home's use right now (this needs **Home power now**), and the devices' total at the top. A device using less than 5 W is shown faded, and an unavailable sensor shows a dash. W and kW sensors both work.
+
+**Colours and spacing.** Set the padding inside the card (20 px by default) and pick your own colours for **Solar**, **Solar forecast**, **Home and devices**, **Grid import** and **Export**. Each colour is used on the graph, its chip and its cell; the devices use the home colour, and the money cell uses the grid and export colours for bought and sold. In YAML a colour can also be written as `"#F48FB1"` or `[244, 143, 177]`. To go back to a default colour, delete its line in the code editor.
 
 ## What each entity needs
 
@@ -115,6 +119,7 @@ devices:                     # optional: live power sensors with a name each
     name: EV
   - entity: sensor.heat_pump_power
     name: Heat pump
+standing_charge_entity: sensor.octopus_energy_electricity_xxxx_current_standing_charge   # optional
 tariff:
   - { start: "00:30", end: "05:30", rate: 0.075, type: off_peak }
   - { start: "16:00", end: "19:00", rate: 0.366, type: peak }
@@ -125,6 +130,8 @@ export_tariff:
 # or, instead of export_tariff, an entity with your export price:
 # export_rate_entity: event.octopus_energy_electricity_xxxx_export_current_day_rates
 timeline_hours: "24"
+card_padding: 16             # optional, default 20
+home_color: "#F48FB1"        # optional; also solar_color, forecast_color, grid_color, export_color
 ```
 
 ## Good to know
@@ -140,6 +147,6 @@ timeline_hours: "24"
 - **Sections view.** The card starts at 12 columns × 12 rows and fits whatever size you give it in the card's **Layout** tab (at least 6 columns × 7 rows). The graph grows or shrinks to fill the space; when space is tight, the humidity row, rain lane, tariff bands, graph toggles, summary tiles and weather icons are left out, in that order. In other views the card is as tall as its content.
 - **Today only.** The summary tiles (solar, home, grid, cost and income, self-powered %) always count from midnight to now. Only the graph reaches into yesterday and tomorrow.
 - **Large totals.** Energy totals of 1000 kWh and above are shown in MWh with two decimals.
-- **Axis.** The kWh axis counts in round steps (0.5, 1, 2, 5, 10 … kWh), as many as the graph's height has room for.
+- **Axis.** The kWh axis counts in round steps (0.5, 1, 2, 5, 10 … kWh), as many as the graph's height has room for. The battery's 100 / 50 / 0 % labels sit inside the graph against its right edge; one that would touch the reserve label is left out.
 - **Impossible hours.** A home can't use or produce more than 100 kWh in an hour. When a fifth or more of an energy sensor's hours read above that, its values are taken as Wh and divided by 1000. A single hour above it is a meter that dropped to zero and came back, so it is left out. Either way the browser console (F12) names the sensor and the hours.
 - **Versions.** The version is shown in the card picker and in the browser console. In the GitHub repo, changing `CARD_VERSION` and pushing publishes a matching release automatically, which HACS then offers as an update.

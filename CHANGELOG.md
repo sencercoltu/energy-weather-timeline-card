@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.9.0
+- **Standing charge**: pick a standing charge entity under **Tariff and cost** (for example Octopus Energy's current standing charge). It is added in full to today's cost and gets its own grey line and bar segment in the money cell. Pence or cents per day are converted.
+- **Colours**: a new **Colours and spacing** section lets you pick the colours for solar, solar forecast, home, grid import and export. Each colour is used on the graph, its chip and its cell; the devices follow the home colour, and the money cell's bought and sold follow grid and export.
+- **Padding**: set the padding inside the card (20 px by default) in the same section.
+- The battery's 100 / 50 / 0 % labels sit inside the graph, against its right edge, so the graph is wider. A label that would touch the reserve label is left out.
+- The current weather moved into the time row: the icon and a big temperature, with the condition, humidity (and this hour's chance of rain, when the forecast has one) and wind as short lines beside it. On a narrow card the weather wraps under the time.
+
 ## v1.8.0
 - Summary cells are laid out in rows of three, down to narrow phones (two per row below about 340 px of card). In a narrow card the cells get a little tighter and their small lines wrap instead of being cut off; a number stays with its unit.
 - New **Devices** cell across the full width: add each appliance's live power sensor (an EV charger, a heat pump …) with a name under **Devices** in the editor. Each shows its power now and a bar with its share of the home's use right now; the cell's header shows the devices' total. A device below 5 W is faded, and an unavailable sensor shows a dash.

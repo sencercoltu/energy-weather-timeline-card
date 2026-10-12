@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.14.0
+- The Temperature card now hosts several sensors in one card: list them under `entities`, each with an optional humidity sensor, name and graph colour. Each gets a cell — name, big temperature, humidity pill, and its graph behind the lower half — in a grid (`columns`, 3 by default; at most 2 on a very narrow card), with an optional `title`.
+- A single sensor without a title still fills the card on its own; the v1.13.0 `entity` / `humidity_entity` settings keep working.
+
 ## v1.13.0
 - Two more cards in the same file, each in the card picker: **Temperature (EWT)** (`custom:ewt-temperature-card`) and **Heating circuits (EWT)** (`custom:ewt-heating-circuits-card`).
 - Temperature: the name and a big temperature, a humidity pill if a humidity sensor is set, and a graph of the temperature over the last hours (24 by default) in the lower half, with a dot at now and the window's range. Graph colour and length are settable.

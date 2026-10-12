@@ -149,16 +149,24 @@ home_color: "#F48FB1"        # optional; also solar_color, forecast_color, grid_
 
 The same file also holds two smaller cards. They are in the card picker as **Temperature (EWT)** and **Heating circuits (EWT)**, with their own editors; nothing extra to install.
 
-**Temperature** (`custom:ewt-temperature-card`): the name and a big temperature, a humidity pill when you pick a humidity sensor, and a graph of the temperature over the last hours in the lower half of the card (only the temperature is drawn), with a dot at now and the window's range in the corner. Its default size in a sections view is 4 columns × 2 rows.
+**Temperature** (`custom:ewt-temperature-card`): any number of temperature sensors in one card, each in its own cell — the name and a big temperature, a humidity pill when you give it a humidity sensor, and a graph of the temperature over the last hours behind the lower half of the cell (only the temperature is drawn), with a dot at now and the window's range in the corner. The cells sit in a grid (`columns`, 3 by default; a very narrow card shows at most 2), under an optional `title`. A single sensor without a title fills the card on its own (4 columns × 2 rows in a sections view).
 
 ```yaml
 type: custom:ewt-temperature-card
-entity: sensor.utility_temperature
-humidity_entity: sensor.utility_humidity   # optional
-name: Utility                              # optional
+title: Rooms                               # optional
 hours: 24                                  # optional, graph length
+columns: 3                                 # optional
 show_range: true                           # optional
-color: "#F2994A"                           # optional, graph colour
+color: "#F2994A"                           # optional, graph colour for sensors without their own
+entities:
+  - entity: sensor.utility_temperature
+    humidity_entity: sensor.utility_humidity   # optional
+    name: Utility                              # optional
+  - entity: sensor.kitchen_temperature
+    humidity_entity: sensor.kitchen_humidity
+  - entity: sensor.heating_ebusd_hwc_storage_temp
+    name: HW Temp
+    color: "#6F8FB8"                           # optional, this sensor's graph colour
 ```
 
 **Heating circuits** (`custom:ewt-heating-circuits-card`): one row per circuit — icon, name, a strip showing when it ran over the last hours, and its state. The run going on now is in full colour; hover a run for its times. A state of `on`, `heat`, `heating`, `running`, `active` or `open` counts as running; a number counts as running above the circuit's `threshold` (0 if not set), and then shows its value with unit, such as a flow temperature. Without an `icon`, the entity's own icon is used if it has one. Its default size is 8 columns, with rows for the number of circuits.

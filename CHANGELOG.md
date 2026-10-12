@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.15.0
+- New **power flow** cell where the Solar forecast cell was: solar, grid, battery and home joined in the middle, with their power now in small figures. Lines that carry power are lit in their colour and dots run the way the power goes (still lines with reduced motion). Turn it off with **Power flow cell** under **Show or hide**.
+- The **Solar** cell now holds the forecast too: today's production with a bar against today's forecast (a mark shows where the forecast expected it to be by now), solar power now at the top right, the forecast for today with what is still to come, and tomorrow's. The best hour moved to the cell's tooltip.
+- New **Solar strings** row: pick **String A power** to **String F power** under **Solar**. The strings are shown in their pairs AB, CD and EF, each pair in its colour, with each string's power now over a bar measured against the strongest string, and the total in the header.
+
 ## v1.14.0
 - The Temperature card now hosts several sensors in one card: list them under `entities`, each with an optional humidity sensor, name and graph colour. Each gets a cell — name, big temperature, humidity pill, and its graph behind the lower half — in a grid (`columns`, 3 by default; at most 2 on a very narrow card), with an optional `title`.
 - A single sensor without a title still fills the card on its own; the v1.13.0 `entity` / `humidity_entity` settings keep working.

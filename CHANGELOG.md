@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.11.0
+- Money cell: the standing charge comes first — standing + bought − sold — in the sum and in the bar.
+- Devices: each device takes one line — its name, its share right after it, and its power at the right end — over a bar of its share. Where the text lies on the bar it switches to near-black or white, whichever reads better on the bar's colour.
+- New **Devices per row** (3 by default; a very narrow card shows at most 2) and **Bar height** (18 px by default; from 14 px the bar is the line's background, below that a thin bar under the line).
+
 ## v1.10.0
 - Money cell is compact: the figures share one line as the sum that gives the net — bought + standing − sold — each underlined in its bar colour (hover for the words). The cell is now as tall as its neighbours.
 - Devices cell is compact: each device is a caption with its name and share of the home's use, over a bar of that share, with its power under it in a smaller font.

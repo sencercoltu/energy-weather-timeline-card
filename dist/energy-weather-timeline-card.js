@@ -75,7 +75,10 @@ const CARD_VERSION = "1.12.0";
 /* [OLD 2026-10-12 v1.13.0->v1.14.0] Version bump for the Temperature card with several sensors.
 const CARD_VERSION = "1.13.0";
 [/OLD] */
+/* [OLD 2026-10-12 v1.14.0->v1.15.0] Version bump for the power flow cell, the Solar cell with the forecast, and the solar strings row.
 const CARD_VERSION = "1.14.0";
+[/OLD] */
+const CARD_VERSION = "1.15.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -293,6 +296,7 @@ const SW = {
   dev: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.2,1V3.6M7.8,1V3.6M2.6,3.6H9.4V6A3.4,3.4 0 0 1 2.6,6ZM6,9.4V11.3" style="fill:none;stroke:#F48FB1;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round"/></svg>`, // added 2026-10-10 v1.8.0
   [/OLD] */
   dev: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.2,1V3.6M7.8,1V3.6M2.6,3.6H9.4V6A3.4,3.4 0 0 1 2.6,6ZM6,9.4V11.3" style="fill:none;stroke:var(--ewt-c-home);stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round"/></svg>`, // v1.9.0: home colour
+  str: `<svg width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"><path d="M2.6,.8H11.4L13.2,9.2H.8ZM4.9,.8L4.3,9.2M9.1,.8L9.7,9.2M1.7,5H12.3" style="fill:none;stroke:var(--ewt-c-solar-edge);stroke-width:1.1;stroke-linejoin:round"/></svg>`, // added 2026-10-12 v1.15.0: solar strings
   bats: `<svg width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"><rect x=".75" y=".75" width="10.5" height="8.5" rx="1.8" style="fill:none;stroke:var(--secondary-text-color);stroke-width:1.3"/><rect x="12" y="3.2" width="1.6" height="3.6" rx=".6" style="fill:var(--secondary-text-color)"/><rect x="2.4" y="2.4" width="5" height="5.2" rx=".8" style="fill:#4DD0A1"/></svg>`, // added 2026-10-12 v1.12.0
 };
 
@@ -638,6 +642,13 @@ function socColour(v, reserve) {
 const batteryList = (c) => (Array.isArray(c.batteries) ? c.batteries : [])
   .map((b) => (typeof b === "string" ? { entity: b } : b && typeof b === "object" ? { entity: b.entity, charging: b.charging_entity, name: b.name } : null))
   .filter((b) => b && typeof b.entity === "string" && b.entity);
+// added 2026-10-12 v1.15.0: the solar strings from the config — string_a_entity … string_f_entity — as { key: "A", pair: 0, entity } for
+// each one set; A and B are pair 0, C and D pair 1, E and F pair 2 (the Powerwall 3's inputs share an MPPT in these pairs)
+const STRING_KEYS = ["a", "b", "c", "d", "e", "f"];
+const stringList = (c) => STRING_KEYS.map((k, i) => ({ key: k.toUpperCase(), pair: Math.floor(i / 2), entity: c[`string_${k}_entity`] }))
+  .filter((x) => typeof x.entity === "string" && x.entity);
+// added 2026-10-12 v1.15.0: the colours of the string pairs AB, CD and EF
+const PAIR_COLOURS = ["#E57373", "#64B5F6", "#81C784"];
 // added 2026-10-12 v1.12.0: the Batteries cell's charge scale — red up to 20 %, yellow at 60 %, green at 100 %, blended in between
 const BATT_STOPS = [[0, SOC_RED], [20, SOC_RED], [60, SOC_YELLOW], [100, SOC_GREEN]];
 const battRgb = (v) => {
@@ -1483,6 +1494,54 @@ ha-card {
 .tile .bbt .bbn { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tile .bbt .bbp { flex: none; display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .tile .bbt .bolt { fill: currentColor; }
+/* added 2026-10-12 v1.15.0: the Solar cell's bar — today's production against today's forecast, with a mark where the forecast
+   expected it to be by now — and the forecast's dashed swatch in its line */
+.tile .bar.sb { min-width: 24px; }
+.tile .bar.sb .fill { background: var(--ewt-c-solar); }
+.tile .bar.sb .sbm { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ewt-c-fc); }
+.tile .fcs { display: inline-block; margin-right: 4px; vertical-align: middle; line-height: 0; }
+.tile .fcs svg { width: 12px; }
+/* added 2026-10-12 v1.15.0: the power flow cell — solar, grid, battery and home joined at a hub; a line carrying power is lit in its
+   colour (--fc) with dots running the way the power goes */
+.tile.flow { position: relative; padding: 0; min-height: 84px; }
+.tile.flow .fw { position: absolute; inset: 8px 10px; }
+.tile .fl { position: absolute; --ln: color-mix(in srgb, var(--primary-text-color) 14%, transparent); }
+.tile .fl.on { --ln: var(--fc); }
+.tile .fl.v { left: 50%; width: 0; border-left: 1.5px solid var(--ln); }
+.tile .fl.h { top: 50%; height: 0; border-top: 1.5px solid var(--ln); }
+.tile .fl.s { top: 17px; bottom: 50%; }
+.tile .fl.hm { top: 50%; bottom: 17px; }
+.tile .fl.g { left: 17px; right: 50%; }
+.tile .fl.b { left: 50%; right: 17px; }
+.tile .fd { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: var(--fc); box-shadow: 0 0 4px var(--fc); transform: translate(-50%, -50%); animation: 1.6s linear infinite; }
+.tile .fl.v .fd { left: -0.75px; animation-name: ewt-fv; }
+.tile .fl.h .fd { top: -0.75px; animation-name: ewt-fh; }
+@keyframes ewt-fv { 0% { top: 0; opacity: 0; } 15%, 85% { opacity: 1; } 100% { top: 100%; opacity: 0; } }
+@keyframes ewt-fh { 0% { left: 0; opacity: 0; } 15%, 85% { opacity: 1; } 100% { left: 100%; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .tile .fd { display: none; } }
+.tile .fh { position: absolute; left: calc(50% + 0.75px); top: calc(50% + 0.75px); width: 5px; height: 5px; border-radius: 50%; transform: translate(-50%, -50%); background: color-mix(in srgb, var(--primary-text-color) 35%, transparent); }
+.tile .fn { position: absolute; display: flex; align-items: center; gap: 3px; font-size: 10px; line-height: 12px; color: var(--secondary-text-color); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tile .fn.on { color: var(--primary-text-color); }
+.tile .fn .fi { flex: none; width: 14px; height: 14px; fill: none; stroke: var(--secondary-text-color); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.tile .fn.on .fi { stroke: var(--fc); }
+.tile .fn .fi .ff { fill: var(--secondary-text-color); stroke: none; }
+.tile .fn.on .fi .ff { fill: var(--fc); }
+.tile .fn .fi .fb { stroke: none; }
+.tile .fn.s { top: 0; left: calc(50% + 0.75px - 7px); }
+.tile .fn.hm { bottom: 0; left: calc(50% + 0.75px - 7px); }
+.tile .fn.g { left: 0; top: calc(50% + 0.75px - 7px); flex-direction: column; align-items: flex-start; gap: 2px; }
+.tile .fn.b { right: 0; top: calc(50% + 0.75px - 7px); flex-direction: column; align-items: flex-end; gap: 2px; }
+/* added 2026-10-12 v1.15.0: the solar strings row — the pairs AB, CD and EF side by side, each string a line over a thin bar */
+.tile.strs { grid-column: 1 / -1; gap: 6px; }
+.tile .sss { display: grid; grid-template-columns: repeat(var(--sgc, 3), minmax(0, 1fr)); gap: 6px 10px; }
+.tile .ssg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 10px; padding: 5px 8px 6px 10px; border-radius: 6px; background: color-mix(in srgb, var(--pc) 9%, transparent); box-shadow: inset 2px 0 0 var(--pc); }
+.tile .ss { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tile .ss.off { opacity: 0.55; }
+.tile .sst { display: flex; align-items: baseline; gap: 6px; font-size: 11px; white-space: nowrap; }
+.tile .ssk { font-weight: 600; color: var(--pc); }
+.tile .ssp { margin-left: auto; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tile .ss .uline .fill { height: 100%; border-radius: 2px; background: var(--pc); }
+@container (max-width: 420px) { .tile .ssg { grid-template-columns: minmax(0, 1fr); } }
 `;
 
 /* ------------------------------------------------------------------ */
@@ -1545,6 +1604,9 @@ const LABELS = {
   export_tariff: "Export tariff periods (optional)", // added 2026-10-09 v1.1.0
   show_storm_alert: "Storm alert", // added 2026-10-09 v1.1.0
   export_rate_entity: "Export price entity (optional)", // added 2026-10-09 v1.2.0
+  string_a_entity: "String A power", string_b_entity: "String B power", string_c_entity: "String C power", // added 2026-10-12 v1.15.0
+  string_d_entity: "String D power", string_e_entity: "String E power", string_f_entity: "String F power", // added 2026-10-12 v1.15.0
+  show_flow: "Power flow cell", // added 2026-10-12 v1.15.0
 };
 const HELPERS = {
   rain_entity: "A total/total_increasing precipitation sensor. Fills the rain lane for past hours; forecast hours always come from the weather entity.",
@@ -1581,6 +1643,8 @@ const HELPERS = {
   card_padding: "Space between the card's edge and its content. 20 px if left empty.", // added 2026-10-11 v1.9.0
   solar_color: "Each colour is used on the graph, its chip and its cell. To go back to the default, delete the line in the code editor.", // added 2026-10-11 v1.9.0
   show_toggles: "Chips under the graph that show or hide the battery, forecast, home, grid and export lines. Each browser remembers its own choice.", // added 2026-10-10 v1.7.0
+  string_a_entity: "Optional: each solar string's power now (a Powerwall 3 has inputs A–F). Shown in a row under the cells, in the pairs AB, CD and EF.", // added 2026-10-12 v1.15.0
+  show_flow: "Solar, grid, battery and home joined in the middle, with their power now; moving dots show where the power goes. It sits where the Solar forecast cell was — the forecast is in the Solar cell.", // added 2026-10-12 v1.15.0
   export_rate_entity: "Your export price as an entity. Takes priority over the export tariff periods. Past hours come from its recorded history; upcoming hours from a rate list in its attributes, if it has one (Octopus Energy's export day-rates event, Nord Pool's raw_today/raw_tomorrow). Units such as GBP/kWh or p/kWh are converted.", // added 2026-10-09 v1.2.0
 };
 
@@ -1649,6 +1713,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
             { name: "solar_power_entity", selector: POWER_SENSOR },
             { name: "solar_forecast_entity", selector: { entity: { filter: { domain: "sensor" } } } },
             { name: "solar_forecast_tomorrow_entity", selector: { entity: { filter: { domain: "sensor" } } } },
+            { // added 2026-10-12 v1.15.0: each solar string's power now (Powerwall 3 inputs A–F)
+              name: "", type: "grid", flatten: true,
+              schema: STRING_KEYS.map((k) => ({ name: `string_${k}_entity`, selector: POWER_SENSOR })),
+            },
           ],
         },
         {
@@ -1757,6 +1825,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
                 { name: "show_storm_alert", selector: { boolean: {} } },
                 { name: "show_tiles", selector: { boolean: {} } },
                 { name: "show_toggles", default: true, selector: { boolean: {} } }, // added 2026-10-10 v1.7.0
+                { name: "show_flow", default: true, selector: { boolean: {} } }, // added 2026-10-12 v1.15.0
               ],
             },
           ],
@@ -1918,6 +1987,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     for (const id of this._entityIds()) if (a.states[id] !== b.states[id]) return true;
     for (const d of deviceList(this._config || {})) if (a.states[d.entity] !== b.states[d.entity]) return true; // added 2026-10-10 v1.8.0
     for (const x of batteryList(this._config || {})) if (a.states[x.entity] !== b.states[x.entity] || (x.charging && a.states[x.charging] !== b.states[x.charging])) return true; // added 2026-10-12 v1.12.0
+    for (const x of stringList(this._config || {})) if (a.states[x.entity] !== b.states[x.entity]) return true; // added 2026-10-12 v1.15.0
     const sc = this._config?.standing_charge_entity; // added 2026-10-11 v1.9.0
     if (sc && a.states[sc] !== b.states[sc]) return true; // added 2026-10-11 v1.9.0
     return a.locale !== b.locale || a.config !== b.config || a.themes?.darkMode !== b.themes?.darkMode;
@@ -3604,19 +3674,130 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     </div>`;
   }
 
+  // added 2026-10-12 v1.15.0: the Solar cell with the forecast in it — power now at the top right; today's production with a bar against
+  // today's forecast and a mark where the forecast expected production to be by now; the forecast for today with what is
+  // still to come; tomorrow's forecast. The best hour is in the tooltip (and takes a line when there is no forecast).
+  _solarTile(m) {
+    const fcTotal = m.solarFc ? m.fcToday : m.fcTotalOnly != null ? m.fcTotalOnly : null;
+    if (!m.solar && fcTotal == null && m.tomorrow == null) return "";
+    const nb = (t) => String(t || "").replace(/(\d) (?=(k?W|kWh|MWh|h|min)\b)/g, "$1\u00a0");
+    const made = m.solar ? m.solarToday : null;
+    const left = m.solarFc && m.fcLeft != null ? m.fcLeft : null;
+    const due = fcTotal != null && left != null ? Math.max(0, fcTotal - left) : null;
+    const best = m.solar && m.solarBest >= 0 && m.solarBestKwh > 0 ? `Best hour ${this._hourLabel(m.solarBest)} · ${this._kwh(m.solarBestKwh)}` : "";
+    let bar = "";
+    if (made != null && fcTotal != null && fcTotal > 0) {
+      const top = Math.max(fcTotal, made);
+      bar = `<div class="bar sb"><div class="fill" style="width:${r1((made / top) * 100)}%"></div>`
+        + `${due != null ? `<div class="sbm" style="left:${r1((due / top) * 100)}%"></div>` : ""}</div>`;
+    }
+    const tomorrow = m.tomorrow != null ? `Tomorrow ${this._kwh(m.tomorrow)}` : "";
+    let s1, s2;
+    if (fcTotal != null) {
+      // what is still to come is in kWh like the total, so it goes without the unit to stay on one line in a narrow cell
+      s1 = `<span class="fcs">${SW.fc}</span>${esc(nb(`${this._kwh(fcTotal)}${left != null ? ` · ${this._kwh(left).replace(/ kWh$/, "")} left` : ""}`))}`;
+      s2 = esc(nb(tomorrow || best));
+    } else {
+      s1 = esc(nb(best));
+      s2 = esc(nb(tomorrow));
+    }
+    const tip = [
+      made != null ? `Solar today ${this._kwh(made)}` : "", m.solarNow !== null ? `now ${this._power(m.solarNow)}` : "",
+      fcTotal != null ? `forecast today ${this._kwh(fcTotal)}` : "", due != null ? `expected by now ${this._kwh(due)}` : "",
+      left != null ? `still to come ${this._kwh(left)}` : "", best, tomorrow,
+    ].filter(Boolean).join(" · ");
+    return `<div class="tile" title="${esc(tip)}"><div class="tl">${SW.solar}<span>Solar</span>`
+      + `${m.solarNow !== null ? `<span class="tr">${esc(this._power(m.solarNow))}</span>` : ""}</div>`
+      + `<div class="row"><span class="tv">${made != null ? esc(this._kwh(made)) : "—"}</span>${bar}</div>`
+      + `<div class="ts">${s1}&nbsp;</div><div class="ts">${s2}&nbsp;</div></div>`;
+  }
+
+  // added 2026-10-12 v1.15.0: the power flow cell — solar at the top, grid on the left, battery on the right and home at the bottom, each
+  // joined to a hub in the middle, with its power now in small figures. A line that carries power is lit in its colour
+  // with dots running the way the power goes: into the hub from solar, grid import and battery discharge; out of it to
+  // home, grid export and battery charge. The dots' phase follows the clock, so a re-render on a state change doesn't
+  // make them jump back; with reduced motion only the lit lines show. The battery icon is filled to its charge.
+  _flowHtml(m) {
+    if (this._config.show_flow === false) return "";
+    const sol = m.solarNow, home = m.homeNow, grid = m.gridNow, batt = m.battNow;
+    const soc = m.socNow != null ? Math.max(0, Math.min(100, m.socNow)) : null;
+    if (sol == null && home == null && grid == null && batt == null) return "";
+    const on = (kw) => kw != null && Math.abs(kw) >= 0.01;
+    const P = 1.6, t0 = (Date.now() % (P * 1000)) / 1000;
+    const dots = (rev) => [0, P / 2].map((d) => `<i class="fd" style="animation-delay:-${((t0 + d) % P).toFixed(2)}s${rev ? ";animation-direction:reverse" : ""}"></i>`).join("");
+    const line = (cls, kw, rev, col) => (kw == null ? "" : `<div class="fl ${cls}${on(kw) ? " on" : ""}" style="--fc:${col}">${on(kw) ? dots(rev) : ""}</div>`);
+    const node = (cls, icon, text, lit, col) => `<div class="fn ${cls}${lit ? " on" : ""}" style="--fc:${col}">${icon}<span class="fv">${esc(text)}</span></div>`;
+    const svg = (body) => `<svg class="fi" viewBox="0 0 14 14" aria-hidden="true">${body}</svg>`;
+    const sun = svg(`<circle class="ff" cx="7" cy="7" r="2.6"/><path d="M7,.8V2.6M7,11.4V13.2M.8,7H2.6M11.4,7H13.2M2.6,2.6L3.9,3.9M10.1,10.1L11.4,11.4M2.6,11.4L3.9,10.1M10.1,3.9L11.4,2.6"/>`);
+    const pylon = svg(`<path d="M7,1L3.6,13M7,1L10.4,13M2,4.4H12M3,8.4H11M4.6,8.4L9.8,13M9.4,8.4L4.2,13"/>`);
+    const house = svg(`<path d="M1.6,7L7,2.2L12.4,7M3.2,5.6V12.6H10.8V5.6M5.8,12.6V9.2H8.2V12.6"/>`);
+    const fillH = soc != null ? r1((soc / 100) * 7.6) : 0;
+    const cell = svg(`<rect x="3.6" y="2.6" width="6.8" height="10.6" rx="1.4"/><path d="M5.6,1.2H8.4"/>`
+      + `${fillH > 0 ? `<rect class="fb" x="5.1" y="${r1(11.7 - fillH)}" width="3.8" height="${fillH}" rx=".5" style="fill:${socColour(soc, m.reserve ?? 0)}"/>` : ""}`);
+    const solC = "var(--ewt-c-solar)", homeC = "var(--ewt-c-home)", battC = "#4DD0A1";
+    const gridC = grid != null && grid < 0 ? "var(--ewt-c-exp)" : "var(--ewt-c-grid)";
+    // directions: solar runs down into the hub and home down out of it; the grid line runs left to right on import; the
+    // battery line left to right (into the battery) while charging — battery power is positive while discharging
+    const lines = line("v s", sol, sol < 0, solC) + line("v hm", home, home < 0, homeC)
+      + line("h g", grid, grid < 0, gridC) + line("h b", batt, batt > 0, battC);
+    const nodes = (sol != null ? node("s", sun, this._power(sol), on(sol), solC) : "")
+      + (home != null ? node("hm", house, this._power(home), on(home), homeC) : "")
+      + (grid != null ? node("g", pylon, this._power(grid), on(grid), gridC) : "")
+      + (batt != null || soc != null ? node("b", cell, batt != null ? this._power(batt) : `${Math.round(soc)}%`, on(batt), battC) : "");
+    const tip = [
+      sol != null ? `Solar ${this._power(sol)}` : "",
+      grid != null ? (grid > 0.01 ? `grid importing ${this._power(grid)}` : grid < -0.01 ? `grid exporting ${this._power(grid)}` : "grid 0 W") : "",
+      batt != null ? (batt < -0.01 ? `battery charging ${this._power(batt)}` : batt > 0.01 ? `battery discharging ${this._power(batt)}` : "battery idle") : "",
+      soc != null ? `battery ${Math.round(soc)}%` : "",
+      home != null ? `home ${this._power(home)}` : "",
+    ].filter(Boolean).join(" · ");
+    return `<div class="tile flow" role="img" aria-label="${esc(tip)}" title="${esc(tip)}"><div class="fw">${lines}<i class="fh"></i>${nodes}</div></div>`;
+  }
+
+  // added 2026-10-12 v1.15.0: the solar strings row — each string's power now over a thin bar (its output against the strongest string's),
+  // grouped in the pairs AB, CD and EF, each pair in its colour; the header has the strings' total. A string below 5 W is
+  // faded; one whose sensor is unavailable shows a dash. Hover a string for its share of the total and its pair's sum.
+  _stringsHtml() {
+    const list = stringList(this._config);
+    if (!list.length) return "";
+    const vals = list.map((x) => ({ ...x, st: this._hass.states[x.entity], kw: powerKW(this._hass.states[x.entity]) }));
+    const known = vals.filter((x) => x.kw != null);
+    const total = known.reduce((a, x) => a + Math.max(0, x.kw), 0);
+    const peak = Math.max(0, ...known.map((x) => x.kw));
+    const groups = [0, 1, 2].map((p) => vals.filter((x) => x.pair === p)).filter((g) => g.length);
+    const html = groups.map((g) => {
+      const pairName = g.map((x) => x.key).join("");
+      const pairSum = g.reduce((a, x) => a + (x.kw != null ? Math.max(0, x.kw) : 0), 0);
+      const items = g.map((x) => {
+        const off = x.kw == null || x.kw < 0.005;
+        const w = x.kw != null && peak > 0 ? Math.max(0, Math.min(100, (x.kw / peak) * 100)) : 0;
+        const share = x.kw != null && total > 0 ? Math.round((Math.max(0, x.kw) / total) * 100) : null;
+        const tip = `String ${x.key}: ${x.kw != null ? this._power(x.kw) : x.st ? x.st.state : "not found"}`
+          + `${share != null ? ` · ${share}% of all strings` : ""}${g.length > 1 ? ` · ${pairName} ${this._power(pairSum)}` : ""}`;
+        return `<div class="ss${off ? " off" : ""}" title="${esc(tip)}"><div class="sst"><span class="ssk">${x.key}</span>`
+          + `<span class="ssp">${x.kw != null ? this._power(x.kw) : "—"}</span></div><div class="uline"><div class="fill" style="width:${r1(w)}%"></div></div></div>`;
+      }).join("");
+      return `<div class="ssg" style="--pc:${PAIR_COLOURS[g[0].pair]}">${items}</div>`;
+    }).join("");
+    // the pairs share the row's width, so two pairs (say C and D not set) take half each
+    return `<div class="tile strs"><div class="tl">${SW.str}<span>Solar strings</span>${known.length ? `<span class="tr">${esc(this._power(total))}</span>` : ""}</div>`
+      + `<div class="sss" style="--sgc:${groups.length}">${html}</div></div>`;
+  }
+
   _tilesHtml(m) {
     const c = this._config;
     const t = [];
     const at = (h) => this._hourLabel(h);
+    /* [OLD 2026-10-12 v1.14.0->v1.15.0] Solar and Solar forecast were two cells; the forecast cell's place now holds the power flow.
     if (m.solar) {
       t.push(this._tile(SW.solar, "Solar", this._kwh(m.solarToday),
         m.solarNow !== null ? `${this._power(m.solarNow)} now` : "",
         /* [OLD 2026-10-09 v1.0.4->v1.1.0] m.solar is now the timeline window, not today's hours.
         m.solarBest >= 0 && m.solar[m.solarBest] > 0 ? `Best hour ${at(m.solarBest)} · ${m.solar[m.solarBest].toFixed(1)} kWh` : ""));
-        [/OLD] */
+        [/OLD] *\/
         /* [OLD 2026-10-09 v1.2.0->v1.3.0] Always kWh.
         m.solarBest >= 0 && m.solarBestKwh > 0 ? `Best hour ${at(m.solarBest)} · ${m.solarBestKwh.toFixed(1)} kWh` : ""));
-        [/OLD] */
+        [/OLD] *\/
         m.solarBest >= 0 && m.solarBestKwh > 0 ? `Best hour ${at(m.solarBest)} · ${this._kwh(m.solarBestKwh)}` : ""));
     }
     /* [OLD 2026-10-09] Showed an unexplained "—" when there was no hourly forecast for today.
@@ -3625,21 +3806,27 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         m.solarFc ? `${m.fcLeft.toFixed(1)} kWh still to come` : "",
         m.tomorrow != null ? `Tomorrow ${m.tomorrow.toFixed(1)} kWh` : ""));
     }
-    [/OLD] */
+    [/OLD] *\/
     if (m.solarFc || m.tomorrow != null || m.fcTotalOnly != null) {
       const value = m.solarFc ? this._kwh(m.fcToday) : m.fcTotalOnly != null ? this._kwh(m.fcTotalOnly) : "—";
       /* [OLD 2026-10-09 v1.0.1->v1.0.2] Gave no hint why hourly data was missing.
       const s1 = m.solarFc ? `${m.fcLeft.toFixed(1)} kWh still to come` : m.fcTotalOnly != null ? "No hourly data" : "No forecast for today";
-      [/OLD] */
+      [/OLD] *\/
       /* [OLD 2026-10-09 v1.2.0->v1.3.0] Always kWh.
       const s1 = m.solarFc ? `${m.fcLeft.toFixed(1)} kWh still to come` : m.fcTotalOnly != null ? "No hourly data — see browser console" : "No forecast for today";
       t.push(this._tile(SW.fc, "Solar forecast", value, s1,
         m.tomorrow != null ? `Tomorrow ${m.tomorrow.toFixed(1)} kWh` : ""));
-      [/OLD] */
+      [/OLD] *\/
       const s1 = m.solarFc ? `${this._kwh(m.fcLeft)} still to come` : m.fcTotalOnly != null ? "No hourly data — see browser console" : "No forecast for today";
       t.push(this._tile(SW.fc, "Solar forecast", value, s1,
         m.tomorrow != null ? `Tomorrow ${this._kwh(m.tomorrow)}` : ""));
     }
+    [/OLD] */
+    // v1.15.0: Solar and its forecast share one cell, and the power flow cell takes the forecast cell's place
+    const sol = this._solarTile(m);
+    if (sol) t.push(sol);
+    const fl = this._flowHtml(m);
+    if (fl) t.push(fl);
     if (m.home || m.homeNow !== null) {
       t.push(this._tile(SW.home, "Home", m.home ? this._kwh(m.homeToday) : "—",
         m.homeNow !== null ? `${this._power(m.homeNow)} now` : "",
@@ -3831,6 +4018,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     } else if (m.selfPowered != null) {
       t.push(this._tile(SW.cost, "Self-powered", `${Math.round(m.selfPowered * 100)}%`, "of home use from solar and battery", ""));
     }
+    const sg = this._stringsHtml(); // added 2026-10-12 v1.15.0: the solar strings row, across the whole row, before Batteries
+    if (sg) t.push(sg); // added 2026-10-12 v1.15.0
     const bt = this._batteriesHtml(); // added 2026-10-12 v1.12.0: the Batteries cell, across the whole row, before Devices
     if (bt) t.push(bt); // added 2026-10-12 v1.12.0
     const dv = this._devicesHtml(m); // added 2026-10-10 v1.8.0: the Devices cell, across the whole row

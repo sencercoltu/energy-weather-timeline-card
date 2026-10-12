@@ -69,7 +69,10 @@ const CARD_VERSION = "1.10.0";
 /* [OLD 2026-10-12 v1.11.0->v1.12.0] Version bump for the Batteries cell.
 const CARD_VERSION = "1.11.0";
 [/OLD] */
+/* [OLD 2026-10-12 v1.12.0->v1.13.0] Version bump for the Temperature and Heating circuits cards.
 const CARD_VERSION = "1.12.0";
+[/OLD] */
+const CARD_VERSION = "1.13.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -3977,7 +3980,387 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   }
 }
 
+
+/* ------------------------------------------------------------------ */
+/* added 2026-10-12 v1.13.0: two more cards in this file — Temperature, Heating circuits */
+/* ------------------------------------------------------------------ */
+
+const TEMP_TAG = "ewt-temperature-card";
+const CIRCUITS_TAG = "ewt-heating-circuits-card";
+
+// the recorded states of some entities over the last `hours`, as [ms, state] per entity (the first row is the state at the start)
+async function fetchHistory(hass, ids, hours) {
+  const now = Date.now(), start = now - hours * HOUR;
+  const r = await hass.callWS({
+    type: "history/history_during_period", start_time: new Date(start).toISOString(), end_time: new Date(now).toISOString(),
+    entity_ids: ids, minimal_response: true, no_attributes: true, significant_changes_only: false,
+  });
+  const out = {};
+  for (const id of ids)
+    out[id] = ((r && r[id]) || []).map((e) => [Math.max(start, toMs(e.lu ?? e.lc)), e.s]).filter((p) => Number.isFinite(p[0]));
+  return out;
+}
+
+// n equal time buckets from t0 to t1: each the mean of the readings in it, else the last reading before it (null before the first)
+function resample(pts, t0, t1, n) {
+  const step = (t1 - t0) / n, out = new Array(n).fill(null);
+  const p = pts.slice().sort((a, b) => a[0] - b[0]);
+  let j = 0, last = null;
+  while (j < p.length && p[j][0] <= t0) last = p[j++][1];
+  for (let i = 0; i < n; i++) {
+    const end = t0 + (i + 1) * step;
+    let sum = 0, cnt = 0;
+    while (j < p.length && p[j][0] <= end) { sum += p[j][1]; cnt++; last = p[j++][1]; }
+    out[i] = cnt ? sum / cnt : last;
+  }
+  return out;
+}
+
+// what the two small cards share: config, a history fetch every 5 minutes (and when the config changes), a redraw on
+// state changes, on resize and every minute
+class EwtSmallCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._hist = null;
+    this._fetchKey = null;
+    this._lastFetch = 0;
+    this._fetching = false;
+    this._size = { w: 0, h: 0 };
+    this._uid = `ewt${Math.random().toString(36).slice(2, 8)}`;
+  }
+  set hass(h) {
+    const old = this._hass;
+    this._hass = h;
+    if (!this._config) return;
+    this._ensureDom();
+    if (!old || this._changed(old, h)) this._schedule();
+    this._maybeFetch();
+  }
+  get hass() { return this._hass; }
+  connectedCallback() {
+    this._ensureDom();
+    if (!this._tick) this._tick = setInterval(() => { this._maybeFetch(); this._schedule(); }, 60000);
+    if (!this._ro && typeof ResizeObserver !== "undefined") {
+      this._ro = new ResizeObserver(() => {
+        if (Math.abs(this._card.clientWidth - this._size.w) > 1 || Math.abs(this._card.clientHeight - this._size.h) > 1) this._schedule();
+      });
+      this._ro.observe(this._card);
+    }
+    this._schedule();
+  }
+  disconnectedCallback() {
+    clearInterval(this._tick);
+    this._tick = null;
+    if (this._ro) { this._ro.disconnect(); this._ro = null; }
+  }
+  _ensureDom() {
+    if (this._card) return;
+    this.shadowRoot.innerHTML = `<style>${SMALL_STYLE}${this._style()}</style><ha-card></ha-card>`;
+    this._card = this.shadowRoot.querySelector("ha-card");
+  }
+  _configChanged() {
+    this._fetchKey = null;
+    this._hist = null;
+    this._ensureDom();
+    this._schedule();
+    this._maybeFetch();
+  }
+  _schedule() {
+    if (this._raf) return;
+    const run = () => {
+      this._raf = null;
+      if (!this._hass || !this._config || !this._card) return;
+      this._size = { w: this._card.clientWidth, h: this._card.clientHeight };
+      this._card.classList.toggle("light", this._hass.themes?.darkMode === false);
+      try {
+        this._card.innerHTML = this._html();
+      } catch (e) {
+        console.error(`${this.localName}: render failed`, e);
+        this._card.innerHTML = `<div class="note err">Card error: ${esc(e.message)}</div>`;
+      }
+    };
+    this._raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame(run) : setTimeout(run, 16);
+  }
+  _maybeFetch() {
+    const ids = this._historyIds();
+    if (!ids.length || this._fetching || !this._hass) return;
+    const key = `${ids.join("|")}|${this._hours()}`;
+    if (key === this._fetchKey && Date.now() - this._lastFetch < 5 * 60000) return;
+    this._fetching = true;
+    this._fetchKey = key;
+    fetchHistory(this._hass, ids, this._hours())
+      .then((h) => { this._hist = h; })
+      .catch((e) => console.warn(`${this.localName}: history failed`, e))
+      .finally(() => { this._fetching = false; this._lastFetch = Date.now(); this._schedule(); });
+  }
+  _timeFmt() {
+    const h = this._hass;
+    try {
+      return new Intl.DateTimeFormat(h.locale?.language || undefined, {
+        hour: "2-digit", minute: "2-digit", hour12: h.locale?.time_format === "12", timeZone: h.config?.time_zone || undefined,
+      });
+    } catch (e) {
+      return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+    }
+  }
+}
+
+const SMALL_STYLE = `
+:host { display: block; height: 100%; }
+ha-card { --ewt-halo: var(--ha-card-background, var(--card-background-color, #1C1C1C)); display: block; height: 100%; box-sizing: border-box; overflow: hidden; }
+.note { padding: 16px; font-size: 13px; color: var(--secondary-text-color); }
+.note.err { color: var(--error-color, #db4437); }
+`;
+
+/* ---------- Temperature card ---------- */
+
+const TEMP_LABELS = {
+  entity: "Temperature sensor", humidity_entity: "Humidity sensor (optional)", name: "Name",
+  hours: "Graph length", show_range: "Show the graph's range", color: "Graph colour",
+};
+const TEMP_HELPERS = {
+  humidity_entity: "Shown as a value only; the graph is the temperature.",
+  name: "Leave empty to use the sensor's name.",
+  hours: "24 hours if left empty.",
+  color: "Orange if left empty. To go back to it, delete the line in the code editor.",
+};
+
+// a big temperature (and humidity, if set) over an n-hour graph of the temperature that fills the lower part of the card
+class EwtTemperatureCard extends EwtSmallCard {
+  static getConfigForm() {
+    return {
+      schema: [
+        { name: "entity", required: true, selector: { entity: { filter: { domain: "sensor" } } } },
+        { name: "humidity_entity", selector: { entity: { filter: { domain: "sensor" } } } },
+        { name: "name", selector: { text: {} } },
+        {
+          name: "", type: "grid", flatten: true,
+          schema: [
+            { name: "hours", selector: { number: { min: 1, max: 168, step: 1, mode: "box", unit_of_measurement: "h" } } },
+            { name: "show_range", default: true, selector: { boolean: {} } },
+          ],
+        },
+        { name: "color", selector: { color_rgb: {} } },
+      ],
+      computeLabel: (sch) => TEMP_LABELS[sch.name],
+      computeHelper: (sch) => TEMP_HELPERS[sch.name],
+    };
+  }
+  static getStubConfig(hass) {
+    const ids = Object.keys(hass?.states || {});
+    const t = ids.find((i) => i.startsWith("sensor.") && hass.states[i].attributes?.device_class === "temperature");
+    return t ? { entity: t } : {};
+  }
+  setConfig(config) {
+    if (!config || typeof config !== "object") throw new Error("Invalid configuration");
+    this._config = { show_range: true, ...config };
+    this._configChanged();
+  }
+  getCardSize() { return 3; }
+  getGridOptions() { return { columns: 4, rows: 2, min_columns: 3, min_rows: 2 }; }
+  _hours() { const v = num(this._config.hours); return v === null ? 24 : Math.max(1, Math.min(168, v)); }
+  _historyIds() { return this._config.entity ? [this._config.entity] : []; }
+  _changed(a, b) {
+    const c = this._config;
+    return [c.entity, c.humidity_entity].some((id) => id && a.states[id] !== b.states[id]) || a.themes?.darkMode !== b.themes?.darkMode;
+  }
+  _style() {
+    return `
+ha-card { position: relative; min-height: 120px; }
+.g { position: absolute; left: 0; top: 0; }
+.top { position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; padding: 10px 12px 0; }
+.lft { display: flex; flex-direction: column; min-width: 0; }
+.nm { font-size: 12px; font-weight: 500; line-height: 15px; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.val { display: flex; align-items: baseline; gap: 2px; line-height: 36px; color: var(--primary-text-color); white-space: nowrap; }
+.num { font-size: 31px; font-weight: 400; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+.u { font-size: 14px; color: var(--secondary-text-color); }
+.hum { flex: none; padding: 3px 8px; border-radius: 10px; background: rgba(127, 179, 230, 0.16); color: #CFE3F7; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+ha-card.light .hum { background: rgba(43, 108, 176, 0.12); color: #2B6CB0; }
+.rg { position: absolute; left: 12px; bottom: 5px; font-size: 10px; color: var(--secondary-text-color); font-variant-numeric: tabular-nums; white-space: nowrap; text-shadow: 0 0 3px var(--ewt-halo), 0 0 6px var(--ewt-halo); }
+`;
+  }
+  _html() {
+    const c = this._config, hass = this._hass;
+    if (!c.entity) return `<div class="note">Choose a temperature sensor in the card editor.</div>`;
+    const st = hass.states[c.entity];
+    const w = this._size.w || 300, h = this._size.h || 120;
+    const unit = st?.attributes?.unit_of_measurement || "°C";
+    const deg = unit.startsWith("°") ? "°" : ` ${unit}`;
+    const prec = hass.entities?.[c.entity]?.display_precision ?? 1;
+    const v = num(st?.state);
+    const name = c.name || st?.attributes?.friendly_name || c.entity;
+    const colour = colourCss(c.color) || "#F2994A";
+    const hrs = this._hours(), now = Date.now(), t0 = now - hrs * HOUR;
+
+    // the graph: the history in buckets (about one per 3 px), the live value at the right end
+    let graph = "", range = "";
+    const raw = ((this._hist && this._hist[c.entity]) || []).map(([t, x]) => [t, num(x)]).filter((p) => p[1] !== null);
+    if (v !== null) raw.push([now, v]);
+    const n = Math.max(24, Math.min(200, Math.round(w / 3)));
+    const vals = resample(raw, t0, now, n);
+    const pts = [];
+    vals.forEach((x, i) => { if (x !== null) pts.push([(i + 1) / n, x]); });
+    if (pts.length >= 2) {
+      let lo = Math.min(...pts.map((p) => p[1])), hi = Math.max(...pts.map((p) => p[1]));
+      const minSpan = /F/.test(unit) ? 2 : 1;
+      if (hi - lo < minSpan) { const m = (hi + lo) / 2; lo = m - minSpan / 2; hi = m + minSpan / 2; }
+      const top = Math.max(62, Math.round(h * 0.5)), bottom = c.show_range !== false ? 18 : 6, gw = w - 6;
+      const xy = pts.map(([f, x]) => [f * gw, top + (1 - (x - lo) / (hi - lo)) * (h - top - bottom)]);
+      let d = `M${r1(xy[0][0])},${r1(xy[0][1])}`;
+      for (let i = 1; i < xy.length - 1; i++)
+        d += ` Q${r1(xy[i][0])},${r1(xy[i][1])} ${r1((xy[i][0] + xy[i + 1][0]) / 2)},${r1((xy[i][1] + xy[i + 1][1]) / 2)}`;
+      const last = xy[xy.length - 1];
+      d += ` L${r1(last[0])},${r1(last[1])}`;
+      const area = `${d} L${w},${r1(last[1])} L${w},${h} L${r1(xy[0][0])},${h} Z`;
+      const gid = `${this._uid}-g`, col = esc(colour);
+      graph = `<svg class="g" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">`
+        + `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0.45" stop-color="${col}" stop-opacity="0.3"></stop>`
+        + `<stop offset="1" stop-color="${col}" stop-opacity="0.02"></stop></linearGradient></defs>`
+        + `<path d="${area}" fill="url(#${gid})"></path>`
+        + `<path d="${d}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"></path>`
+        + `<circle cx="${r1(last[0])}" cy="${r1(last[1])}" r="3.2" fill="${col}" style="stroke: var(--ewt-halo); stroke-width: 2"></circle></svg>`;
+      const rl = Math.min(...pts.map((p) => p[1])), rh = Math.max(...pts.map((p) => p[1]));
+      if (c.show_range !== false) range = `<div class="rg">${hrs} h · ${rl.toFixed(prec)}–${rh.toFixed(prec)}${esc(deg.trim())}</div>`;
+    }
+    let hum = "";
+    if (c.humidity_entity) {
+      const hv = num(hass.states[c.humidity_entity]?.state);
+      hum = `<div class="hum">${hv !== null ? Math.round(hv) : "—"}% RH</div>`;
+    }
+    const title = `${name}: ${v !== null ? v.toFixed(prec) : "—"} ${unit}`;
+    return `${graph}<div class="top" title="${esc(title)}"><div class="lft"><div class="nm">${esc(name)}</div>`
+      + `<div class="val"><span class="num">${v !== null ? v.toFixed(prec) : "—"}</span><span class="u">${esc(unit)}</span></div></div>${hum}</div>${range}`;
+  }
+}
+
+/* ---------- Heating circuits card ---------- */
+
+const CIRCUIT_LABELS = { title: "Title (optional)", circuits: "Circuits", hours: "Timeline length", color: "Running colour" };
+const CIRCUIT_HELPERS = {
+  circuits: "Each circuit's entity (a pump state, valve, switch …), a name and an icon. A number counts as running above its 'On above' value (0 if empty), e.g. a hot water flow temperature with 1.",
+  hours: "12 hours if left empty.",
+  color: "Orange if left empty. To go back to it, delete the line in the code editor.",
+};
+const ON_STATES = ["on", "heat", "heating", "true", "yes", "running", "active", "open", "pumping", "charging"];
+const circuitList = (c) => (Array.isArray(c.circuits) ? c.circuits : [])
+  .map((x) => (typeof x === "string" ? { entity: x } : x && typeof x === "object" ? { entity: x.entity, name: x.name, icon: x.icon, threshold: num(x.threshold) } : null))
+  .filter((x) => x && typeof x.entity === "string" && x.entity);
+// running or not from a state: on/heat/running … for text, above the threshold for a number; null when unknown
+const circuitOn = (state, threshold) => {
+  if (state == null) return null;
+  const t = String(state).toLowerCase().trim();
+  if (["unavailable", "unknown", "none", ""].includes(t)) return null;
+  const n = strictNum(state);
+  if (n !== null) return n > (threshold ?? 0);
+  return ON_STATES.includes(t);
+};
+
+// one row per circuit: icon and name, a strip with when it ran over the last n hours (the run going on now in full
+// colour), and its state — its value with unit (e.g. a flow temperature) or "On", else "Off"
+class EwtCircuitsCard extends EwtSmallCard {
+  static getConfigForm() {
+    return {
+      schema: [
+        { name: "title", selector: { text: {} } },
+        {
+          name: "circuits",
+          selector: { object: {
+            multiple: true, label_field: "name", description_field: "entity",
+            fields: {
+              entity: { label: "Entity", required: true, selector: { entity: {} } },
+              name: { label: "Name", selector: { text: {} } },
+              icon: { label: "Icon", selector: { icon: {} } },
+              threshold: { label: "On above (numbers only)", selector: { number: { mode: "box", step: 0.1 } } },
+            },
+          } },
+        },
+        {
+          name: "", type: "grid", flatten: true,
+          schema: [
+            { name: "hours", selector: { number: { min: 1, max: 72, step: 1, mode: "box", unit_of_measurement: "h" } } },
+            { name: "color", selector: { color_rgb: {} } },
+          ],
+        },
+      ],
+      computeLabel: (sch) => CIRCUIT_LABELS[sch.name],
+      computeHelper: (sch) => CIRCUIT_HELPERS[sch.name],
+    };
+  }
+  static getStubConfig() { return { circuits: [] }; }
+  setConfig(config) {
+    if (!config || typeof config !== "object") throw new Error("Invalid configuration");
+    if (config.circuits !== undefined && config.circuits !== null && !Array.isArray(config.circuits)) throw new Error("'circuits' must be a list");
+    this._config = { ...config };
+    this._configChanged();
+  }
+  getCardSize() { return 2; }
+  getGridOptions() {
+    const n = circuitList(this._config || {}).length || 3;
+    const h = n * 30 + (this._config?.title ? 28 : 0) + 34;
+    return { columns: 8, rows: Math.max(1, Math.ceil(h / 64)), min_columns: 4, min_rows: 1 };
+  }
+  _hours() { const v = num(this._config.hours); return v === null ? 12 : Math.max(1, Math.min(72, v)); }
+  _historyIds() { return circuitList(this._config).map((x) => x.entity); }
+  _changed(a, b) { return this._historyIds().some((id) => a.states[id] !== b.states[id]) || a.themes?.darkMode !== b.themes?.darkMode; }
+  _style() {
+    return `
+ha-card { padding: 10px 12px 8px; display: flex; flex-direction: column; gap: 6px; }
+.hd { font-size: 14px; font-weight: 500; color: var(--primary-text-color); }
+.bd { flex: 1; display: grid; grid-template-columns: auto minmax(40px, 1fr) auto; column-gap: 10px; row-gap: 4px; align-content: space-evenly; align-items: center; }
+.nm { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; font-weight: 500; color: var(--secondary-text-color); white-space: nowrap; }
+.nm span { overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+.nm.on { color: var(--primary-text-color); }
+.nm ha-icon { flex: none; --mdc-icon-size: 16px; width: 16px; height: 16px; color: var(--disabled-text-color, #7A7A7A); }
+.nm.on ha-icon { color: var(--ewt-acc); }
+.sp { position: relative; height: 10px; border-radius: 3px; background: color-mix(in srgb, var(--primary-text-color) 7%, transparent); overflow: hidden; }
+.sg { position: absolute; top: 0; bottom: 0; min-width: 2px; border-radius: 2px; background: color-mix(in srgb, var(--ewt-acc) 55%, transparent); }
+.sg.live { background: var(--ewt-acc); }
+.st { justify-self: end; min-width: 24px; text-align: right; font-size: 11px; font-weight: 500; color: var(--disabled-text-color, #7A7A7A); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.st.on { color: var(--ewt-acc); }
+.tk { container-type: inline-size; display: flex; justify-content: space-between; gap: 4px; font-size: 9px; color: var(--secondary-text-color); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@container (max-width: 100px) { .tk .mid { display: none; } }
+`;
+  }
+  _html() {
+    const c = this._config, hass = this._hass, list = circuitList(c);
+    this._card.style.setProperty("--ewt-acc", colourCss(c.color) || "#F2994A");
+    if (!list.length) return `<div class="note">Add circuits in the card editor.</div>`;
+    const H = this._hours(), now = Date.now(), t0 = now - H * HOUR, span = now - t0;
+    const tf = this._timeFmt();
+    const rows = list.map((x) => {
+      const st = hass.states[x.entity];
+      const name = x.name || st?.attributes?.friendly_name || x.entity;
+      const on = circuitOn(st?.state, x.threshold);
+      // runs: each recorded state holds until the next one; the live state holds until now
+      const pts = ((this._hist && this._hist[x.entity]) || []).slice().sort((a, b) => a[0] - b[0]);
+      if (st) pts.push([now, st.state]);
+      const runs = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = Math.max(t0, pts[i][0]), b = Math.min(now, pts[i + 1][0]);
+        if (b <= a || !circuitOn(pts[i][1], x.threshold)) continue;
+        const prev = runs[runs.length - 1];
+        if (prev && a - prev[1] < 1000) prev[1] = b; else runs.push([a, b]);
+      }
+      const segs = runs.map(([a, b]) => {
+        const live = on && now - b < 1000;
+        return `<i class="sg${live ? " live" : ""}" style="left:${(((a - t0) / span) * 100).toFixed(2)}%;width:${(((b - a) / span) * 100).toFixed(2)}%"`
+          + ` title="${esc(`${tf.format(a)}–${live ? "now" : tf.format(b)}`)}"></i>`;
+      }).join("");
+      const n = strictNum(st?.state), unit = st?.attributes?.unit_of_measurement || "";
+      const label = on === null ? "—" : !on ? "Off" : n !== null && unit ? `${Math.round(n)}${unit.startsWith("°") ? "°" : ` ${unit}`}` : "On";
+      const icon = x.icon || st?.attributes?.icon || "";
+      return `<div class="nm${on ? " on" : ""}">${icon ? `<ha-icon icon="${esc(icon)}"></ha-icon>` : ""}<span>${esc(name)}</span></div>`
+        + `<div class="sp">${segs}</div><span class="st${on ? " on" : ""}">${esc(label)}</span>`;
+    }).join("");
+    const ticks = `<span></span><div class="tk"><span>−${H} h</span><span class="mid">−${r1(H / 2)} h</span><span>now</span></div><span></span>`;
+    return `${c.title ? `<div class="hd">${esc(c.title)}</div>` : ""}<div class="bd">${rows}${ticks}</div>`;
+  }
+}
+
 if (!customElements.get(CARD_TAG)) customElements.define(CARD_TAG, EnergyWeatherTimelineCard);
+if (!customElements.get(TEMP_TAG)) customElements.define(TEMP_TAG, EwtTemperatureCard); // added 2026-10-12 v1.13.0
+if (!customElements.get(CIRCUITS_TAG)) customElements.define(CIRCUITS_TAG, EwtCircuitsCard); // added 2026-10-12 v1.13.0
 
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === CARD_TAG)) {
@@ -3993,6 +4376,14 @@ if (!window.customCards.some((c) => c.type === CARD_TAG)) {
     description: `Clock, hourly weather, solar, home, grid and battery on one sliding timeline with now in the centre. v${CARD_VERSION}`,
     preview: true,
   });
+}
+
+// added 2026-10-12 v1.13.0: the two smaller cards in the card picker
+for (const [type, name, description] of [
+  [TEMP_TAG, "Temperature (EWT)", `A big temperature, and humidity if you like, over a graph of the last hours. v${CARD_VERSION}`],
+  [CIRCUITS_TAG, "Heating circuits (EWT)", `Pumps, valves or circuits with a timeline of when each ran. v${CARD_VERSION}`],
+]) {
+  if (!window.customCards.some((c) => c.type === type)) window.customCards.push({ type, name, description, preview: true });
 }
 
 console.info(`%c ENERGY-WEATHER-TIMELINE-CARD %c v${CARD_VERSION} `, "color:#fff;background:#2F64B0;font-weight:600", "color:#2F64B0;background:transparent");

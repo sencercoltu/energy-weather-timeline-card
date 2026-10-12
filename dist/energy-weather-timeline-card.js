@@ -63,7 +63,10 @@ const CARD_VERSION = "1.8.0";
 /* [OLD 2026-10-12 v1.9.0->v1.10.0] Version bump for the compact money and Devices cells and the Other device.
 const CARD_VERSION = "1.9.0";
 [/OLD] */
+/* [OLD 2026-10-12 v1.10.0->v1.11.0] Version bump for standing charge first, one-line devices, bar height and device columns.
 const CARD_VERSION = "1.10.0";
+[/OLD] */
+const CARD_VERSION = "1.11.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -427,6 +430,31 @@ const colourCss = (v) => {
   if (typeof v !== "string") return null;
   const t = v.trim();
   return /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(t) || /^(?:rgb|hsl)a?\([\d\s.,%/+-]+\)$/i.test(t) || /^[a-z]{3,20}$/i.test(t) ? t : null;
+};
+// added 2026-10-12 v1.11.0: any CSS colour the browser understands as [r, g, b] (a canvas resolves it), or null
+const cssRgb = (() => {
+  let ctx = null;
+  return (c) => {
+    if (!c || typeof document === "undefined") return null;
+    try {
+      if (!ctx) ctx = document.createElement("canvas").getContext("2d");
+      if (!ctx) return null;
+      ctx.fillStyle = "#000";
+      ctx.fillStyle = String(c).trim();
+      const v = String(ctx.fillStyle);
+      if (v[0] === "#") return [1, 3, 5].map((i) => parseInt(v.slice(i, i + 2), 16));
+      const n = v.match(/[\d.]+/g);
+      return n && n.length >= 3 ? n.slice(0, 3).map(Number) : null;
+    } catch (e) {
+      return null;
+    }
+  };
+})();
+// added 2026-10-12 v1.11.0: near-black or white, whichever reads better on that background (WCAG luminance)
+const inkOn = (rgb) => {
+  if (!rgb) return null;
+  const lin = rgb.map((x) => { x /= 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2] > 0.179 ? "rgba(0, 0, 0, 0.87)" : "#fff";
 };
 const RATE_TIME_KEYS = ["start", "from", "valid_from", "period_start", "start_time", "datetime", "time", "begin"];
 const RATE_END_KEYS = ["end", "to", "valid_to", "period_end", "end_time", "until"];
@@ -1381,6 +1409,22 @@ ha-card {
 .tile .dc .dcp { position: relative; font-variant-numeric: tabular-nums; }
 .tile .dv .dpw { padding-left: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tile .dv.oth .dcn { font-style: italic; }
+/* added 2026-10-12 v1.11.0: one line per device over its share bar; settable bar height (--dbar) and columns (--dcols) */
+.tile .dvs { grid-template-columns: repeat(var(--dcols, 3), minmax(0, 1fr)); gap: 6px 12px; }
+@container (max-width: 340px) { .tile .dvs.many { --dcols: 2; } }
+.tile .dc { height: max(18px, var(--dbar, 18px)); padding: 0; gap: 0; display: block; }
+.tile .dc .dcf { background: var(--ewt-c-home); }
+.tile .dv.oth .dc .dcf { background: var(--secondary-text-color); }
+.tile .dct { position: relative; display: flex; align-items: center; gap: 5px; height: 100%; padding: 0 6px; font-size: 11px; white-space: nowrap; }
+.tile .dct.dci { position: absolute; inset: 0; }
+.tile .dct .dcn { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tile .dct .dcp { flex: none; font-variant-numeric: tabular-nums; opacity: 0.8; }
+.tile .dct .dpw { flex: none; margin-left: auto; padding-left: 6px; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tile .dv.oth .dct .dcn { font-style: italic; }
+.tile .dc.thin { height: auto; background: none; overflow: visible; padding-bottom: calc(var(--dbar) + 2px); }
+.tile .dc.thin .dct { height: 16px; padding: 0 1px; }
+.tile .dc.thin::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: var(--dbar); border-radius: 2px; background: color-mix(in srgb, var(--primary-text-color) 12%, transparent); }
+.tile .dc.thin .dcf { top: auto; height: var(--dbar); border-radius: 2px; }
 `;
 
 /* ------------------------------------------------------------------ */
@@ -1428,6 +1472,8 @@ const LABELS = {
   show_toggles: "Graph toggles", // added 2026-10-10 v1.7.0
   devices: "Devices", // added 2026-10-10 v1.8.0
   devices_other: "Show Other (the rest of the home's use)", // added 2026-10-12 v1.10.0
+  devices_columns: "Devices per row", // added 2026-10-12 v1.11.0
+  devices_bar_size: "Bar height", // added 2026-10-12 v1.11.0
   standing_charge_entity: "Standing charge entity (optional)", // added 2026-10-11 v1.9.0
   card_padding: "Padding inside the card", // added 2026-10-11 v1.9.0
   solar_color: "Solar", // added 2026-10-11 v1.9.0
@@ -1467,6 +1513,8 @@ const HELPERS = {
   show_storm_alert: "A red label when the hourly forecast has thunder, hail, exceptional weather or storm-force wind in the next 24 hours.", // added 2026-10-09 v1.1.0
   devices: "Each device's live power sensor (EV charger, heat pump …) and a name. Shown in a cell under the others with its share of the home's use right now. An empty name uses the sensor's own.", // added 2026-10-10 v1.8.0
   standing_charge_entity: "Your daily standing charge, for example Octopus Energy's current standing charge sensor. Added in full to today's cost. Pence or cents per day are converted.", // added 2026-10-11 v1.9.0
+  devices_columns: "3 if left empty. A very narrow card shows at most 2.", // added 2026-10-12 v1.11.0
+  devices_bar_size: "18 px if left empty. From 14 px the bar is the line's background; below that it is a thin bar under the line.", // added 2026-10-12 v1.11.0
   devices_other: "Home power minus the devices above, so the shares add up to 100 %. Needs Home power now.", // added 2026-10-12 v1.10.0
   card_padding: "Space between the card's edge and its content. 20 px if left empty.", // added 2026-10-11 v1.9.0
   solar_color: "Each colour is used on the graph, its chip and its cell. To go back to the default, delete the line in the code editor.", // added 2026-10-11 v1.9.0
@@ -1566,6 +1614,13 @@ class EnergyWeatherTimelineCard extends HTMLElement {
               } },
             },
             { name: "devices_other", default: true, selector: { boolean: {} } }, // added 2026-10-12 v1.10.0
+            { // added 2026-10-12 v1.11.0: devices per row, bar height
+              name: "", type: "grid", flatten: true,
+              schema: [
+                { name: "devices_columns", selector: { number: { min: 1, max: 6, step: 1, mode: "box" } } },
+                { name: "devices_bar_size", selector: { number: { min: 2, max: 32, step: 1, mode: "slider", unit_of_measurement: "px" } } },
+              ],
+            },
           ],
         },
         {
@@ -3650,7 +3705,10 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       const label = both ? (earn ? "Net earnings" : "Net cost") : hasOut ? "Grid cost" : "Export income";
       const val = both ? Math.abs(m.cost.net) : hasOut ? out : exp;
       const tot = out + (exp || 0);
+      /* [OLD 2026-10-12 v1.10.0->v1.11.0] Bought came first in the bar.
       const segs = [["b", imp], ["st", std], ["s", exp]].filter(([, v]) => v != null);
+      [/OLD] */
+      const segs = [["st", std], ["b", imp], ["s", exp]].filter(([, v]) => v != null); // v1.11.0: standing charge first
       const bar = segs.length > 1 && tot > 0
         ? `<div class="bar split">${segs.map(([k, v]) => `<div class="fill ${k}" style="width:${r1((Math.max(0, v) / tot) * 100)}%"></div>`).join("")}</div>`
         : "";
@@ -3673,10 +3731,17 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       if (many) {
         const am = (cls, v) => `<span class="am ${cls}">${esc(this._money(v))}</span>`;
         const terms = [];
+        /* [OLD 2026-10-12 v1.10.0->v1.11.0] Bought came first, then the standing charge.
         if (imp != null) terms.push(am("b", imp));
         if (std != null) terms.push(`${terms.length ? "+ " : ""}${am("st", std)}`);
         if (exp != null) terms.push(`− ${am("s", exp)}`);
         const tip = [imp != null ? `bought ${this._money(imp)}` : "", std != null ? `standing charge ${this._money(std)}` : "", exp != null ? `sold ${this._money(exp)}` : ""]
+        [/OLD] */
+        // v1.11.0: standing charge first — standing + bought − sold
+        if (std != null) terms.push(am("st", std));
+        if (imp != null) terms.push(`${terms.length ? "+ " : ""}${am("b", imp)}`);
+        if (exp != null) terms.push(`− ${am("s", exp)}`);
+        const tip = [std != null ? `standing charge ${this._money(std)}` : "", imp != null ? `bought ${this._money(imp)}` : "", exp != null ? `sold ${this._money(exp)}` : ""]
           .filter(Boolean).join(" · ");
         s1Html = `<span class="eq" title="${esc(tip)}">${terms.map((x) => `<span class="pr">${x}</span>`).join(" ")}</span>`;
       } else if (imp != null) s1Html = dot("b", m.impToday != null ? `${this._kwh(m.impToday)} bought` : "bought");
@@ -3724,6 +3789,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   // v1.10.0: each device is a caption — its name and share of the home's use right now, over a bar of that share — with
   // its power under it in a smaller font. "Other" (on unless devices_other is false) is the home's power minus the listed
   // devices, so the shares add up to 100 %; it needs a home power sensor and is drawn in grey.
+  /* [OLD 2026-10-12 v1.10.0->v1.11.0] Name and share on a caption over the bar, the power on a second line; fixed bar and three columns.
   _devicesHtml(m) {
     const list = deviceList(this._config);
     if (!list.length) return "";
@@ -3753,6 +3819,53 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     const head = known ? `${this._power(total)}${home ? ` · ${Math.round(pct(total))}% of home` : ""}` : "";
     return `<div class="tile devs"><div class="tl">${SW.dev}<span>Devices</span>${head ? `<span class="tr">${esc(head)}</span>` : ""}</div>`
       + `<div class="dvs">${items.join("")}</div></div>`;
+  }
+  [/OLD] */
+  // v1.11.0: each device is one line — name, its share right after it, its power at the right end — over a bar of its share
+  // of the home's use right now. Where the text lies on the bar it is drawn again, clipped to the bar, in near-black or
+  // white (whichever reads better on the bar's colour). devices_bar_size: 14 px and up, the bar is the line's background
+  // (default 18); below that, a thin bar under the line. devices_columns: devices per row (default 3; at most 2 on a very
+  // narrow card unless set to 1).
+  _devicesHtml(m) {
+    const c = this._config;
+    const list = deviceList(c);
+    if (!list.length) return "";
+    const home = m.homeNow != null && m.homeNow > 0.01 ? m.homeNow : null;
+    const pct = (kw) => Math.min(100, (kw / home) * 100);
+    const barPx = Math.max(2, Math.min(32, num(c.devices_bar_size) ?? 18));
+    const cols = Math.max(1, Math.min(6, Math.round(num(c.devices_columns) ?? 3)));
+    const thin = barPx < 14;
+    const cs = this._card ? getComputedStyle(this._card) : null;
+    const inkHome = cs ? inkOn(cssRgb(cs.getPropertyValue("--ewt-c-home"))) : null;
+    const inkOther = cs ? inkOn(cssRgb(cs.getPropertyValue("--secondary-text-color"))) : null;
+    const item = (name, kw, cls, tip) => {
+      const share = kw != null && home ? pct(kw) : null;
+      const off = kw == null || kw < 0.005;
+      const text = `<span class="dcn">${esc(name)}</span>${share != null ? `<span class="dcp">${Math.round(share)}%</span>` : ""}`
+        + `<span class="dpw">${kw != null ? this._power(kw) : "—"}</span>`;
+      const ink = cls === "oth" ? inkOther : inkHome;
+      const over = !thin && share != null && share > 0 && ink
+        ? `<div class="dct dci" aria-hidden="true" style="clip-path:inset(0 ${r1(100 - share)}% 0 0);color:${ink}">${text}</div>` : "";
+      return `<div class="dv${off ? " off" : ""}${cls ? ` ${cls}` : ""}"${tip ? ` title="${esc(tip)}"` : ""}>`
+        + `<div class="dc${thin ? " thin" : ""}">${share != null ? `<div class="dcf" style="width:${r1(share)}%"></div>` : ""}`
+        + `<div class="dct">${text}</div>${over}</div></div>`;
+    };
+    let total = 0, known = 0;
+    const items = list.map((d) => {
+      const st = this._hass.states[d.entity];
+      const name = d.name || st?.attributes?.friendly_name || d.entity;
+      const kw = powerKW(st);
+      if (kw === null) return item(name, null, "", `${d.entity}: ${st ? st.state : "not found"}`);
+      const p = Math.max(0, kw);
+      total += p;
+      known++;
+      return item(name, p, "", "");
+    });
+    if (home && known && c.devices_other !== false)
+      items.push(item("Other", Math.max(0, home - total), "oth", "Home use not covered by the devices above"));
+    const head = known ? `${this._power(total)}${home ? ` · ${Math.round(pct(total))}% of home` : ""}` : "";
+    return `<div class="tile devs" style="--dbar:${barPx}px;--dcols:${cols}"><div class="tl">${SW.dev}<span>Devices</span>${head ? `<span class="tr">${esc(head)}</span>` : ""}</div>`
+      + `<div class="dvs${cols > 2 ? " many" : ""}">${items.join("")}</div></div>`;
   }
 }
 

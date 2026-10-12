@@ -72,7 +72,10 @@ const CARD_VERSION = "1.11.0";
 /* [OLD 2026-10-12 v1.12.0->v1.13.0] Version bump for the Temperature and Heating circuits cards.
 const CARD_VERSION = "1.12.0";
 [/OLD] */
+/* [OLD 2026-10-12 v1.13.0->v1.14.0] Version bump for the Temperature card with several sensors.
 const CARD_VERSION = "1.13.0";
+[/OLD] */
+const CARD_VERSION = "1.14.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -4115,6 +4118,7 @@ ha-card { --ewt-halo: var(--ha-card-background, var(--card-background-color, #1C
 
 /* ---------- Temperature card ---------- */
 
+/* [OLD 2026-10-12 v1.13.0->v1.14.0] One sensor per card, graph drawn in pixels from the measured card size.
 const TEMP_LABELS = {
   entity: "Temperature sensor", humidity_entity: "Humidity sensor (optional)", name: "Name",
   hours: "Graph length", show_range: "Show the graph's range", color: "Graph colour",
@@ -4231,6 +4235,174 @@ ha-card.light .hum { background: rgba(43, 108, 176, 0.12); color: #2B6CB0; }
     const title = `${name}: ${v !== null ? v.toFixed(prec) : "—"} ${unit}`;
     return `${graph}<div class="top" title="${esc(title)}"><div class="lft"><div class="nm">${esc(name)}</div>`
       + `<div class="val"><span class="num">${v !== null ? v.toFixed(prec) : "—"}</span><span class="u">${esc(unit)}</span></div></div>${hum}</div>${range}`;
+  }
+}
+[/OLD] */
+// v1.14.0: the Temperature card hosts several sensors — `entities`, each with its own humidity sensor, name and colour —
+// as cells in a grid inside one card (`columns`, 3 by default; an optional `title`). Each cell: name, big temperature,
+// a humidity pill if set, and the temperature's graph over the last `hours` behind its lower half. A single sensor
+// (also the old top-level `entity`) without a title fills the card on its own.
+const TEMP_LABELS = {
+  title: "Title (optional)", entities: "Sensors", hours: "Graph length", columns: "Sensors per row",
+  show_range: "Show each graph's range", color: "Graph colour",
+};
+const TEMP_HELPERS = {
+  entities: "Each with its temperature sensor, an optional humidity sensor (shown as a value; only the temperature is drawn), a name and a graph colour.",
+  hours: "24 hours if left empty.",
+  columns: "3 if left empty. A very narrow card shows at most 2.",
+  color: "For sensors without their own colour; orange if left empty. To go back to it, delete the line in the code editor.",
+};
+const tempList = (c) => {
+  const list = (Array.isArray(c.entities) ? c.entities : [])
+    .map((x) => (typeof x === "string" ? { entity: x } : x && typeof x === "object" ? { entity: x.entity, humidity: x.humidity_entity, name: x.name, color: x.color } : null))
+    .filter((x) => x && typeof x.entity === "string" && x.entity);
+  if (typeof c.entity === "string" && c.entity) list.unshift({ entity: c.entity, humidity: c.humidity_entity, name: c.name, color: c.color });
+  return list;
+};
+
+class EwtTemperatureCard extends EwtSmallCard {
+  static getConfigForm() {
+    return {
+      schema: [
+        { name: "title", selector: { text: {} } },
+        {
+          name: "entities",
+          selector: { object: {
+            multiple: true, label_field: "name", description_field: "entity",
+            fields: {
+              entity: { label: "Temperature sensor", required: true, selector: { entity: { filter: { domain: "sensor" } } } },
+              humidity_entity: { label: "Humidity sensor (optional)", selector: { entity: { filter: { domain: "sensor" } } } },
+              name: { label: "Name", selector: { text: {} } },
+              color: { label: "Graph colour", selector: { color_rgb: {} } },
+            },
+          } },
+        },
+        {
+          name: "", type: "grid", flatten: true,
+          schema: [
+            { name: "hours", selector: { number: { min: 1, max: 168, step: 1, mode: "box", unit_of_measurement: "h" } } },
+            { name: "columns", selector: { number: { min: 1, max: 6, step: 1, mode: "box" } } },
+            { name: "show_range", default: true, selector: { boolean: {} } },
+          ],
+        },
+        { name: "color", selector: { color_rgb: {} } },
+      ],
+      computeLabel: (sch) => TEMP_LABELS[sch.name],
+      computeHelper: (sch) => TEMP_HELPERS[sch.name],
+    };
+  }
+  static getStubConfig(hass) {
+    const ids = Object.keys(hass?.states || {});
+    const t = ids.filter((i) => i.startsWith("sensor.") && hass.states[i].attributes?.device_class === "temperature").slice(0, 3);
+    return t.length ? { entities: t.map((entity) => ({ entity })) } : { entities: [] };
+  }
+  setConfig(config) {
+    if (!config || typeof config !== "object") throw new Error("Invalid configuration");
+    if (config.entities !== undefined && config.entities !== null && !Array.isArray(config.entities)) throw new Error("'entities' must be a list");
+    this._config = { show_range: true, ...config };
+    this._configChanged();
+  }
+  getCardSize() { return 3; }
+  _cols() { const v = num(this._config?.columns); return Math.max(1, Math.min(6, Math.round(v === null ? 3 : v))); }
+  _single() { return tempList(this._config || {}).length === 1 && !this._config?.title; }
+  getGridOptions() {
+    if (this._single()) return { columns: 4, rows: 2, min_columns: 3, min_rows: 2 };
+    const n = Math.max(1, tempList(this._config || {}).length), cols = this._cols(), rowsN = Math.ceil(n / cols);
+    const h = 24 + (this._config?.title ? 28 : 0) + rowsN * 112 + (rowsN - 1) * 8;
+    return { columns: 12, rows: Math.max(2, Math.ceil(h / 64)), min_columns: 4, min_rows: 2 };
+  }
+  _hours() { const v = num(this._config.hours); return v === null ? 24 : Math.max(1, Math.min(168, v)); }
+  _historyIds() { return [...new Set(tempList(this._config).map((x) => x.entity))]; }
+  _changed(a, b) {
+    return tempList(this._config).some((x) => a.states[x.entity] !== b.states[x.entity] || (x.humidity && a.states[x.humidity] !== b.states[x.humidity]))
+      || a.themes?.darkMode !== b.themes?.darkMode;
+  }
+  _style() {
+    return `
+ha-card { container-type: inline-size; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 120px; }
+ha-card.single { padding: 0; }
+.hd { font-size: 14px; font-weight: 500; color: var(--primary-text-color); }
+.cells { flex: 1; display: grid; grid-template-columns: repeat(var(--tcols, 3), minmax(0, 1fr)); grid-auto-rows: minmax(108px, 1fr); gap: 8px; }
+@container (max-width: 340px) { .cells.many { --tcols: 2; } }
+.cell { position: relative; container-type: inline-size; min-width: 0; border-radius: 10px; overflow: hidden; background: color-mix(in srgb, var(--primary-text-color) 4%, transparent); }
+ha-card.single .cells { grid-auto-rows: 1fr; }
+ha-card.single .cell { border-radius: 0; background: none; }
+.gr { position: absolute; left: 0; right: 0; bottom: 0; top: max(58px, 48%); }
+.gr svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; }
+.dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--ewt-halo); }
+.top { position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; padding: 10px 12px 0; }
+.lft { display: flex; flex-direction: column; min-width: 0; }
+.nm { font-size: 12px; font-weight: 500; line-height: 15px; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.val { display: flex; align-items: baseline; gap: 2px; line-height: 36px; color: var(--primary-text-color); white-space: nowrap; }
+.num { font-size: 30px; font-weight: 400; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+.u { font-size: 14px; color: var(--secondary-text-color); }
+.hum { flex: none; padding: 3px 8px; border-radius: 10px; background: rgba(127, 179, 230, 0.16); color: #CFE3F7; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+ha-card.light .hum { background: rgba(43, 108, 176, 0.12); color: #2B6CB0; }
+.rg { position: absolute; left: 12px; bottom: 5px; font-size: 10px; color: var(--secondary-text-color); font-variant-numeric: tabular-nums; white-space: nowrap; text-shadow: 0 0 3px var(--ewt-halo), 0 0 6px var(--ewt-halo); }
+@container (max-width: 150px) {
+  .top { padding: 8px 9px 0; flex-wrap: wrap; row-gap: 2px; }
+  .num { font-size: 25px; }
+  .val { line-height: 30px; }
+  .hum { order: 3; padding: 2px 6px; font-size: 11px; }
+  .rg { left: 9px; }
+}
+`;
+  }
+  _html() {
+    const c = this._config, hass = this._hass, list = tempList(c);
+    const single = list.length === 1 && !c.title;
+    this._card.classList.toggle("single", single);
+    if (!list.length) return `<div class="note">Add temperature sensors in the card editor.</div>`;
+    const cols = this._cols();
+    const hrs = this._hours(), now = Date.now(), t0 = now - hrs * HOUR, n = 72;
+    const showRange = c.show_range !== false;
+    const cells = list.map((x, k) => {
+      const st = hass.states[x.entity];
+      const unit = st?.attributes?.unit_of_measurement || "°C";
+      const deg = unit.startsWith("°") ? "°" : ` ${unit}`;
+      const prec = hass.entities?.[x.entity]?.display_precision ?? 1;
+      const v = num(st?.state);
+      const name = x.name || st?.attributes?.friendly_name || x.entity;
+      const col = esc(colourCss(x.color) || colourCss(c.color) || "#F2994A");
+
+      // the graph, in a 100×100 box stretched over the lower part of the cell: the line keeps its width, the dot at now is
+      // drawn as an element so it stays round
+      let graph = "", range = "";
+      const raw = ((this._hist && this._hist[x.entity]) || []).map(([t, y]) => [t, num(y)]).filter((p) => p[1] !== null);
+      if (v !== null) raw.push([now, v]);
+      const pts = [];
+      resample(raw, t0, now, n).forEach((y, i) => { if (y !== null) pts.push([((i + 1) / n) * 97, y]); });
+      if (pts.length >= 2) {
+        let lo = Math.min(...pts.map((p) => p[1])), hi = Math.max(...pts.map((p) => p[1]));
+        const rl = lo, rh = hi, minSpan = /F/.test(unit) ? 2 : 1;
+        if (hi - lo < minSpan) { const m = (hi + lo) / 2; lo = m - minSpan / 2; hi = m + minSpan / 2; }
+        const yTop = 6, yBot = showRange ? 74 : 92;
+        const xy = pts.map(([px, y]) => [px, yTop + (1 - (y - lo) / (hi - lo)) * (yBot - yTop)]);
+        let d = `M${r1(xy[0][0])},${r1(xy[0][1])}`;
+        for (let i = 1; i < xy.length - 1; i++)
+          d += ` Q${r1(xy[i][0])},${r1(xy[i][1])} ${r1((xy[i][0] + xy[i + 1][0]) / 2)},${r1((xy[i][1] + xy[i + 1][1]) / 2)}`;
+        const last = xy[xy.length - 1];
+        d += ` L${r1(last[0])},${r1(last[1])}`;
+        const gid = `${this._uid}-${k}`;
+        graph = `<div class="gr"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">`
+          + `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity="0.3"></stop>`
+          + `<stop offset="1" stop-color="${col}" stop-opacity="0.02"></stop></linearGradient></defs>`
+          + `<path d="${d} L100,${r1(last[1])} L100,100 L${r1(xy[0][0])},100 Z" fill="url(#${gid})"></path>`
+          + `<path d="${d}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></path></svg>`
+          + `<i class="dot" style="left:${r1(last[0])}%;top:${r1(last[1])}%;background:${col}"></i></div>`;
+        if (showRange) range = `<div class="rg">${hrs} h · ${rl.toFixed(prec)}–${rh.toFixed(prec)}${esc(deg.trim())}</div>`;
+      }
+      let hum = "";
+      if (x.humidity) {
+        const hv = num(hass.states[x.humidity]?.state);
+        hum = `<div class="hum">${hv !== null ? Math.round(hv) : "—"}% RH</div>`;
+      }
+      const shown = v !== null ? v.toFixed(prec) : "—";
+      return `<div class="cell" title="${esc(`${name}: ${shown} ${unit}`)}">${graph}<div class="top"><div class="lft"><div class="nm">${esc(name)}</div>`
+        + `<div class="val"><span class="num">${shown}</span><span class="u">${esc(unit)}</span></div></div>${hum}</div>${range}</div>`;
+    }).join("");
+    return `${c.title ? `<div class="hd">${esc(c.title)}</div>` : ""}`
+      + `<div class="cells${!single && cols > 2 ? " many" : ""}" style="--tcols:${single ? 1 : cols}">${cells}</div>`;
   }
 }
 

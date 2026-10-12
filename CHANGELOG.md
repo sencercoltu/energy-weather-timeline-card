@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.13.0
+- Two more cards in the same file, each in the card picker: **Temperature (EWT)** (`custom:ewt-temperature-card`) and **Heating circuits (EWT)** (`custom:ewt-heating-circuits-card`).
+- Temperature: the name and a big temperature, a humidity pill if a humidity sensor is set, and a graph of the temperature over the last hours (24 by default) in the lower half, with a dot at now and the window's range. Graph colour and length are settable.
+- Heating circuits: one row per circuit (pump, valve, switch …) with its icon and name, a strip showing when it ran over the last hours (12 by default; the run going on now in full colour, hover a run for its times), and its state — its value with unit (such as a flow temperature) or On/Off. A number counts as running above an "On above" value per circuit.
+
 ## v1.12.0
 - New **Batteries** cell, above Devices, for any number of batteries (an EV, an e-bike, a phone, a power bank …). Each has a state of charge entity, an optional charging-state entity and a name, and is drawn as a battery-shaped bar filled to its charge: red up to 20 %, yellow at 60 %, green at 100 %, blended in between. While charging, stripes move across the fill and a bolt sits by the percentage; the header counts the batteries charging. **Batteries per row** sets the columns (3 by default).
 - The charging state can be on/off (binary sensor, switch, input boolean), a state such as "charging" ("not charging", "discharging" and "fully charged" count as not charging), or a number above zero (a charging power or current).

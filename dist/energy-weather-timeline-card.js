@@ -66,7 +66,10 @@ const CARD_VERSION = "1.9.0";
 /* [OLD 2026-10-12 v1.10.0->v1.11.0] Version bump for standing charge first, one-line devices, bar height and device columns.
 const CARD_VERSION = "1.10.0";
 [/OLD] */
+/* [OLD 2026-10-12 v1.11.0->v1.12.0] Version bump for the Batteries cell.
 const CARD_VERSION = "1.11.0";
+[/OLD] */
+const CARD_VERSION = "1.12.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -284,6 +287,7 @@ const SW = {
   dev: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.2,1V3.6M7.8,1V3.6M2.6,3.6H9.4V6A3.4,3.4 0 0 1 2.6,6ZM6,9.4V11.3" style="fill:none;stroke:#F48FB1;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round"/></svg>`, // added 2026-10-10 v1.8.0
   [/OLD] */
   dev: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.2,1V3.6M7.8,1V3.6M2.6,3.6H9.4V6A3.4,3.4 0 0 1 2.6,6ZM6,9.4V11.3" style="fill:none;stroke:var(--ewt-c-home);stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round"/></svg>`, // v1.9.0: home colour
+  bats: `<svg width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"><rect x=".75" y=".75" width="10.5" height="8.5" rx="1.8" style="fill:none;stroke:var(--secondary-text-color);stroke-width:1.3"/><rect x="12" y="3.2" width="1.6" height="3.6" rx=".6" style="fill:var(--secondary-text-color)"/><rect x="2.4" y="2.4" width="5" height="5.2" rx=".8" style="fill:#4DD0A1"/></svg>`, // added 2026-10-12 v1.12.0
 };
 
 /* ------------------------------------------------------------------ */
@@ -623,6 +627,37 @@ function socColour(v, reserve) {
   }
   return `rgb(${SOC_GREEN.join(",")})`;
 }
+
+// added 2026-10-12 v1.12.0: the batteries from the config — a list of { entity, charging_entity, name } (a bare entity id is accepted too)
+const batteryList = (c) => (Array.isArray(c.batteries) ? c.batteries : [])
+  .map((b) => (typeof b === "string" ? { entity: b } : b && typeof b === "object" ? { entity: b.entity, charging: b.charging_entity, name: b.name } : null))
+  .filter((b) => b && typeof b.entity === "string" && b.entity);
+// added 2026-10-12 v1.12.0: the Batteries cell's charge scale — red up to 20 %, yellow at 60 %, green at 100 %, blended in between
+const BATT_STOPS = [[0, SOC_RED], [20, SOC_RED], [60, SOC_YELLOW], [100, SOC_GREEN]];
+const battRgb = (v) => {
+  const p = Math.max(0, Math.min(100, v));
+  for (let i = 1; i < BATT_STOPS.length; i++) {
+    const [p0, c0] = BATT_STOPS[i - 1], [p1, c1] = BATT_STOPS[i];
+    if (p <= p1) {
+      const t = p1 > p0 ? (p - p0) / (p1 - p0) : 1;
+      return c0.map((a, k) => Math.round(a + (c1[k] - a) * t));
+    }
+  }
+  return SOC_GREEN.slice();
+};
+// added 2026-10-12 v1.12.0: is a battery charging, from its charging entity — on (binary sensor, switch, input boolean), a state such
+// as "charging" (not "not charging", "discharging" or "fully charged"), or a number above zero (charging power or
+// current). null when unknown.
+const isCharging = (st) => {
+  if (!st) return null;
+  const s = String(st.state ?? "").toLowerCase().trim();
+  if (["unavailable", "unknown", "none", ""].includes(s)) return null;
+  if (["on", "true", "yes"].includes(s)) return true;
+  if (["off", "false", "no"].includes(s)) return false;
+  const n = strictNum(st.state);
+  if (n !== null) return n > 0;
+  return /charg/.test(s) && !/(not|dis|un)[\s_-]*charg|full|complete|done|finish|stop|pause|idle|wait|end/.test(s);
+};
 
 function smooth(pts, base, top) {
   const f = r1;
@@ -1425,6 +1460,23 @@ ha-card {
 .tile .dc.thin .dct { height: 16px; padding: 0 1px; }
 .tile .dc.thin::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: var(--dbar); border-radius: 2px; background: color-mix(in srgb, var(--primary-text-color) 12%, transparent); }
 .tile .dc.thin .dcf { top: auto; height: var(--dbar); border-radius: 2px; }
+/* added 2026-10-12 v1.12.0: the Batteries cell — battery-shaped bars, moving stripes while charging */
+.tile.bats { grid-column: 1 / -1; gap: 6px; }
+.tile .bts { display: grid; grid-template-columns: repeat(var(--bcols, 3), minmax(0, 1fr)); gap: 6px 12px; }
+@container (max-width: 340px) { .tile .bts.many { --bcols: 2; } }
+.tile .bt { display: flex; align-items: center; min-width: 0; }
+.tile .bt.off { opacity: 0.55; }
+.tile .bb { position: relative; flex: 1; min-width: 0; height: 20px; box-sizing: border-box; border: 1.5px solid color-mix(in srgb, var(--primary-text-color) 32%, transparent); border-radius: 5px; overflow: hidden; }
+.tile .bnub { flex: none; width: 3px; height: 8px; margin-left: 1px; border-radius: 0 2px 2px 0; background: color-mix(in srgb, var(--primary-text-color) 32%, transparent); }
+.tile .bbf { position: absolute; left: 2px; top: 2px; bottom: 2px; border-radius: 2.5px; }
+.tile .bt.chg .bbf { background-image: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.32) 0 5px, rgba(255, 255, 255, 0) 5px 10px); background-size: 14.142px 100%; animation: ewt-charge 0.9s linear infinite; }
+@keyframes ewt-charge { from { background-position: 0 0; } to { background-position: 14.142px 0; } }
+@media (prefers-reduced-motion: reduce) { .tile .bt.chg .bbf { animation: none; } }
+.tile .bbt { position: relative; display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 6px; font-size: 11px; white-space: nowrap; }
+.tile .bbt.bbi { position: absolute; inset: 0; }
+.tile .bbt .bbn { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tile .bbt .bbp { flex: none; display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tile .bbt .bolt { fill: currentColor; }
 `;
 
 /* ------------------------------------------------------------------ */
@@ -1470,6 +1522,8 @@ const LABELS = {
   show_wind: "Wind row",
   show_tiles: "Summary tiles",
   show_toggles: "Graph toggles", // added 2026-10-10 v1.7.0
+  batteries: "Batteries", // added 2026-10-12 v1.12.0
+  batteries_columns: "Batteries per row", // added 2026-10-12 v1.12.0
   devices: "Devices", // added 2026-10-10 v1.8.0
   devices_other: "Show Other (the rest of the home's use)", // added 2026-10-12 v1.10.0
   devices_columns: "Devices per row", // added 2026-10-12 v1.11.0
@@ -1511,6 +1565,8 @@ const HELPERS = {
   export_tariff: "Same format as the import tariff periods, with your export rates. Example:\n- start: '16:00'\n  end: '19:00'\n  rate: 0.29\n  type: peak\nHours not listed use the standard export rate. Shown as a second band and used for today's income.", // added 2026-10-09 v1.1.0
   timeline_hours: "How many hours the timeline shows, with now always in the centre. Joins yesterday, today and tomorrow.", // added 2026-10-09 v1.1.0
   show_storm_alert: "A red label when the hourly forecast has thunder, hail, exceptional weather or storm-force wind in the next 24 hours.", // added 2026-10-09 v1.1.0
+  batteries: "Each battery's state of charge (in %), an optional charging-state entity — on/off, a state such as \"charging\", or a charging power above zero — and a name. Shown in a cell above Devices; a charging battery has moving stripes and a bolt.", // added 2026-10-12 v1.12.0
+  batteries_columns: "3 if left empty. A very narrow card shows at most 2.", // added 2026-10-12 v1.12.0
   devices: "Each device's live power sensor (EV charger, heat pump …) and a name. Shown in a cell under the others with its share of the home's use right now. An empty name uses the sensor's own.", // added 2026-10-10 v1.8.0
   standing_charge_entity: "Your daily standing charge, for example Octopus Energy's current standing charge sensor. Added in full to today's cost. Pence or cents per day are converted.", // added 2026-10-11 v1.9.0
   devices_columns: "3 if left empty. A very narrow card shows at most 2.", // added 2026-10-12 v1.11.0
@@ -1598,6 +1654,23 @@ class EnergyWeatherTimelineCard extends HTMLElement {
             { name: "grid_export_entity", selector: ENERGY_SENSOR },
             { name: "grid_power_entity", selector: POWER_SENSOR },
             { name: "grid_power_invert", selector: { boolean: {} } },
+          ],
+        },
+        { // added 2026-10-12 v1.12.0: batteries (EV, bike, power bank …), each with its charge, charging state and a name
+          name: "batteries_section", type: "expandable", flatten: true, title: "Batteries",
+          schema: [
+            {
+              name: "batteries",
+              selector: { object: {
+                multiple: true, label_field: "name", description_field: "entity",
+                fields: {
+                  entity: { label: "State of charge", required: true, selector: { entity: { filter: [{ domain: "sensor" }, { domain: "number" }, { domain: "input_number" }] } } },
+                  charging_entity: { label: "Charging state (optional)", selector: { entity: { filter: [{ domain: "binary_sensor" }, { domain: "sensor" }, { domain: "switch" }, { domain: "input_boolean" }] } } },
+                  name: { label: "Name", selector: { text: {} } },
+                },
+              } },
+            },
+            { name: "batteries_columns", selector: { number: { min: 1, max: 6, step: 1, mode: "box" } } },
           ],
         },
         { // added 2026-10-10 v1.8.0: devices with a live power sensor, each with a name
@@ -1838,6 +1911,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   _entitiesChanged(a, b) {
     for (const id of this._entityIds()) if (a.states[id] !== b.states[id]) return true;
     for (const d of deviceList(this._config || {})) if (a.states[d.entity] !== b.states[d.entity]) return true; // added 2026-10-10 v1.8.0
+    for (const x of batteryList(this._config || {})) if (a.states[x.entity] !== b.states[x.entity] || (x.charging && a.states[x.charging] !== b.states[x.charging])) return true; // added 2026-10-12 v1.12.0
     const sc = this._config?.standing_charge_entity; // added 2026-10-11 v1.9.0
     if (sc && a.states[sc] !== b.states[sc]) return true; // added 2026-10-11 v1.9.0
     return a.locale !== b.locale || a.config !== b.config || a.themes?.darkMode !== b.themes?.darkMode;
@@ -3751,6 +3825,8 @@ class EnergyWeatherTimelineCard extends HTMLElement {
     } else if (m.selfPowered != null) {
       t.push(this._tile(SW.cost, "Self-powered", `${Math.round(m.selfPowered * 100)}%`, "of home use from solar and battery", ""));
     }
+    const bt = this._batteriesHtml(); // added 2026-10-12 v1.12.0: the Batteries cell, across the whole row, before Devices
+    if (bt) t.push(bt); // added 2026-10-12 v1.12.0
     const dv = this._devicesHtml(m); // added 2026-10-10 v1.8.0: the Devices cell, across the whole row
     if (dv) t.push(dv); // added 2026-10-10 v1.8.0
     return t.length ? `<div class="tiles">${t.join("")}</div>` : "";
@@ -3826,6 +3902,38 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   // white (whichever reads better on the bar's colour). devices_bar_size: 14 px and up, the bar is the line's background
   // (default 18); below that, a thin bar under the line. devices_columns: devices per row (default 3; at most 2 on a very
   // narrow card unless set to 1).
+  // added 2026-10-12 v1.12.0: one battery-shaped bar per battery — name on the left, charge on the right — filled to its charge in the
+  // red / yellow / green scale. While charging, stripes move across the fill and a bolt sits by the percentage. Text on
+  // the fill is drawn again, clipped to it, in near-black or white for the fill colour. The stripes' phase follows the
+  // clock (a negative delay), so a re-render on a state change doesn't make them jump back.
+  _batteriesHtml() {
+    const c = this._config;
+    const list = batteryList(c);
+    if (!list.length) return "";
+    const cols = Math.max(1, Math.min(6, Math.round(num(c.batteries_columns) ?? 3)));
+    const bolt = `<svg class="bolt" width="7" height="10" viewBox="0 0 7 10" aria-hidden="true"><path d="M4.3 0L0 5.6h2.8L2.2 10 7 4.1H4.1z"/></svg>`;
+    let charging = 0;
+    const items = list.map((x) => {
+      const st = this._hass.states[x.entity];
+      const name = x.name || st?.attributes?.friendly_name || x.entity;
+      const v = num(st?.state);
+      const soc = v === null ? null : Math.max(0, Math.min(100, v));
+      const chg = x.charging ? isCharging(this._hass.states[x.charging]) : null;
+      if (chg) charging++;
+      const rgb = soc !== null ? battRgb(soc) : null;
+      const text = `<span class="bbn">${esc(name)}</span><span class="bbp">${chg ? bolt : ""}${soc !== null ? `${Math.round(soc)}%` : "—"}</span>`;
+      const fillW = soc !== null ? `calc((100% - 4px) * ${r1(soc / 100)})` : "0";
+      const ink = rgb ? inkOn(rgb) : null;
+      const over = soc ? `<div class="bbt bbi" aria-hidden="true" style="clip-path:inset(0 calc(100% - 2px - ${fillW}) 0 0);color:${ink}">${text}</div>` : "";
+      const tip = `${name}: ${soc !== null ? `${Math.round(soc)}%` : st ? st.state : "not found"}${chg ? " · charging" : chg === false ? " · not charging" : ""}`;
+      return `<div class="bt${chg ? " chg" : ""}${soc === null ? " off" : ""}" title="${esc(tip)}"><div class="bb">`
+        + `${rgb ? `<div class="bbf" style="width:${fillW};background-color:rgb(${rgb.join(",")})${chg ? `;animation-delay:-${(Date.now() % 900) / 1000}s` : ""}"></div>` : ""}`
+        + `<div class="bbt">${text}</div>${over}</div><div class="bnub"></div></div>`;
+    });
+    return `<div class="tile bats" style="--bcols:${cols}"><div class="tl">${SW.bats}<span>Batteries</span>${charging ? `<span class="tr">${charging} charging</span>` : ""}</div>`
+      + `<div class="bts${cols > 2 ? " many" : ""}">${items.join("")}</div></div>`;
+  }
+
   _devicesHtml(m) {
     const c = this._config;
     const list = deviceList(c);

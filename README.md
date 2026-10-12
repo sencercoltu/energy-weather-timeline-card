@@ -5,7 +5,8 @@ A Home Assistant dashboard card with:
 - a clock with the current weather beside it: a big temperature, the condition, humidity, chance of rain and wind
 - a weather-warning banner and a red storm alert
 - one sliding timeline with now always in the centre, joining yesterday, today and tomorrow: hourly weather, solar production and forecast, home use, grid import/export, battery charge with backup reserve, import and export tariff periods, rain, humidity and UV
-- six summary tiles underneath, including the battery's time left and today's import cost and export income
+- summary cells underneath: solar with its forecast, a small power flow, home, grid, the battery with its time left, and today's import cost and export income
+- optional rows for your solar strings (A–F, in pairs), other batteries and devices
 
 It was built and checked against Home Assistant 2026.10. It is a single file with no external downloads, so it works offline and in the Companion app.
 
@@ -74,6 +75,12 @@ Any hour not listed uses **Standard export rate**. When export periods are set, 
 
 **Graph toggles.** Chips under the graph show or hide **Battery** (the charge line and the reserve line), **Forecast**, **Home**, **Grid** (import) and **Export**; tap one to switch it. The kWh axis fits what is shown, and the summary tiles still count everything. Each browser remembers its own choice, so a wall tablet and your phone can show different lines. Turn the chips off with **Graph toggles** under **Show or hide**; the graph then shows every line.
 
+**Solar cell.** Today's production with a bar against today's forecast — the mark on it is where the forecast expected production to be by now — and the solar power now at the top right. Under it, the forecast for today with what is still to come (the dashed line, like the forecast on the graph), and tomorrow's forecast. Hover the cell for the best hour so far. Without a forecast, the best hour takes the forecast's line.
+
+**Power flow.** The second cell shows solar (top), grid (left), battery (right) and home (bottom), each joined to a point in the middle, with its power now in small figures. A line that carries power is lit in its colour, and dots run along it the way the power goes — from solar, from the grid while importing (or towards it, in the export colour, while exporting), from the battery while discharging and into it while charging, and on to the home. The battery icon is filled to its charge. With reduced motion turned on in the device's settings, the lines stay lit without dots. Turn the cell off with **Power flow cell** under **Show or hide**.
+
+**Solar strings.** Under **Solar**, pick each string's power sensor, **String A power** to **String F power** (a Powerwall 3 has inputs A–F; set only the ones you use). They appear in a row across the full width, under the other cells, grouped in their pairs — A and B, C and D, E and F — each pair in its own colour. Each string shows its power now over a thin bar measured against the strongest string, so a shaded or failed string stands out; the header has the strings' total. Hover a string for its share of the total and its pair's sum. A string below 5 W is faded, and an unavailable sensor shows a dash.
+
 **Batteries.** Under **Batteries**, add any batteries you want to watch — an EV, an e-bike, a phone, a power bank — each with its state of charge entity (in %), an optional charging-state entity and a name. They appear in one cell across the full width, above Devices. Each is a battery-shaped bar filled to its charge: red up to 20 %, yellow at 60 %, green at 100 %, blended in between. While a battery charges, stripes move across the fill and a bolt sits by the percentage, and the header counts the batteries charging. The charging state can be on/off (a binary sensor, switch or input boolean), a state such as `charging` (`not charging`, `discharging` and `fully charged` count as not charging), or a number above zero, such as a charging power. **Batteries per row** sets the columns (3 by default; a very narrow card shows at most 2). With reduced motion turned on in the device's settings, the stripes stand still.
 
 **Devices.** Under **Devices**, add each appliance that has a live power sensor (an EV charger, a heat pump …) and give it a name; an empty name uses the sensor's own. They appear in one cell across the full width, under the summary cells, with the devices' total at the top. Each device takes one line — its name, its share of the home's use right now (this needs **Home power now**), and its power at the right end — over a bar of that share. Where the text lies on the bar it switches to near-black or white, whichever reads better on the bar's colour. **Devices per row** sets the columns (3 by default; a very narrow card shows at most 2), and **Bar height** the bar (18 px by default; from 14 px the bar is the line's background, below that it is a thin bar under the line). **Other** is the home's power minus the listed devices, so the shares add up to 100 %; it is shown in grey, and **Show Other** turns it off. A device using less than 5 W is shown faded, and an unavailable sensor shows a dash. W and kW sensors both work.
@@ -103,6 +110,8 @@ warning_entity: binary_sensor.meteoalarm
 solar_energy_entity: sensor.powerwall_solar_energy
 solar_power_entity: sensor.powerwall_solar_power
 solar_forecast_tomorrow_entity: sensor.energy_production_tomorrow
+string_a_entity: sensor.powerwall_string_a_power   # optional, one per string; also string_b_entity … string_f_entity
+string_b_entity: sensor.powerwall_string_b_power
 home_energy_entity: sensor.powerwall_home_energy
 home_power_entity: sensor.powerwall_load_power
 grid_import_entity: sensor.powerwall_grid_import

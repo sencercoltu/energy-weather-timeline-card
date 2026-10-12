@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.10.0
+- Money cell is compact: the figures share one line as the sum that gives the net — bought + standing − sold — each underlined in its bar colour (hover for the words). The cell is now as tall as its neighbours.
+- Devices cell is compact: each device is a caption with its name and share of the home's use, over a bar of that share, with its power under it in a smaller font.
+- New **Other** device: the home's power minus the listed devices, so the shares add up to 100 %. Shown in grey; needs **Home power now**. Turn it off with **Show Other** under **Devices**.
+
 ## v1.9.0
 - **Standing charge**: pick a standing charge entity under **Tariff and cost** (for example Octopus Energy's current standing charge). It is added in full to today's cost and gets its own grey line and bar segment in the money cell. Pence or cents per day are converted.
 - **Colours**: a new **Colours and spacing** section lets you pick the colours for solar, solar forecast, home, grid import and export. Each colour is used on the graph, its chip and its cell; the devices follow the home colour, and the money cell's bought and sold follow grid and export.

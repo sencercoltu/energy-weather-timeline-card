@@ -60,7 +60,10 @@ const CARD_VERSION = "1.7.0";
 /* [OLD 2026-10-11 v1.8.0->v1.9.0] Version bump for the standing charge, colours, padding, inner % labels and the weather in the time row.
 const CARD_VERSION = "1.8.0";
 [/OLD] */
+/* [OLD 2026-10-12 v1.9.0->v1.10.0] Version bump for the compact money and Devices cells and the Other device.
 const CARD_VERSION = "1.9.0";
+[/OLD] */
+const CARD_VERSION = "1.10.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -1362,6 +1365,22 @@ ha-card {
 .wx > svg { flex: none; width: clamp(26px, 6.4cqi, 38px); height: clamp(26px, 6.4cqi, 38px); }
 .wx .wt { font-size: clamp(28px, 7.4cqi, 44px); font-weight: 500; letter-spacing: -1px; line-height: 1; white-space: nowrap; }
 .wx .wd { display: flex; flex-direction: column; gap: 2px; margin-left: 4px; font-size: clamp(11px, 2.6cqi, 13px); line-height: 1.25; color: var(--secondary-text-color); white-space: nowrap; }
+/* added 2026-10-12 v1.10.0: the money cell's figures as one sum, each underlined in its bar colour */
+.tile .am { box-shadow: inset 0 -2px 0 var(--ac); }
+.tile .am.b { --ac: var(--ewt-buy); }
+.tile .am.st { --ac: color-mix(in srgb, var(--secondary-text-color) 75%, transparent); }
+.tile .am.s { --ac: var(--ewt-sell); }
+/* added 2026-10-12 v1.10.0: compact Devices cell — a caption with the share bar as its background, the power under it */
+.tile.devs { gap: 6px; }
+.tile .dvs { gap: 6px 10px; }
+.tile .dv { gap: 2px; }
+.tile .dc { position: relative; display: flex; align-items: center; gap: 6px; height: 18px; padding: 0 6px; border-radius: 4px; overflow: hidden; font-size: 11px; background: color-mix(in srgb, var(--primary-text-color) 7%, transparent); }
+.tile .dc .dcf { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--ewt-c-home) 45%, transparent); }
+.tile .dv.oth .dc .dcf { background: color-mix(in srgb, var(--secondary-text-color) 40%, transparent); }
+.tile .dc .dcn { position: relative; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .dc .dcp { position: relative; font-variant-numeric: tabular-nums; }
+.tile .dv .dpw { padding-left: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tile .dv.oth .dcn { font-style: italic; }
 `;
 
 /* ------------------------------------------------------------------ */
@@ -1408,6 +1427,7 @@ const LABELS = {
   show_tiles: "Summary tiles",
   show_toggles: "Graph toggles", // added 2026-10-10 v1.7.0
   devices: "Devices", // added 2026-10-10 v1.8.0
+  devices_other: "Show Other (the rest of the home's use)", // added 2026-10-12 v1.10.0
   standing_charge_entity: "Standing charge entity (optional)", // added 2026-10-11 v1.9.0
   card_padding: "Padding inside the card", // added 2026-10-11 v1.9.0
   solar_color: "Solar", // added 2026-10-11 v1.9.0
@@ -1447,6 +1467,7 @@ const HELPERS = {
   show_storm_alert: "A red label when the hourly forecast has thunder, hail, exceptional weather or storm-force wind in the next 24 hours.", // added 2026-10-09 v1.1.0
   devices: "Each device's live power sensor (EV charger, heat pump …) and a name. Shown in a cell under the others with its share of the home's use right now. An empty name uses the sensor's own.", // added 2026-10-10 v1.8.0
   standing_charge_entity: "Your daily standing charge, for example Octopus Energy's current standing charge sensor. Added in full to today's cost. Pence or cents per day are converted.", // added 2026-10-11 v1.9.0
+  devices_other: "Home power minus the devices above, so the shares add up to 100 %. Needs Home power now.", // added 2026-10-12 v1.10.0
   card_padding: "Space between the card's edge and its content. 20 px if left empty.", // added 2026-10-11 v1.9.0
   solar_color: "Each colour is used on the graph, its chip and its cell. To go back to the default, delete the line in the code editor.", // added 2026-10-11 v1.9.0
   show_toggles: "Chips under the graph that show or hide the battery, forecast, home, grid and export lines. Each browser remembers its own choice.", // added 2026-10-10 v1.7.0
@@ -1544,6 +1565,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
                 },
               } },
             },
+            { name: "devices_other", default: true, selector: { boolean: {} } }, // added 2026-10-12 v1.10.0
           ],
         },
         {
@@ -3633,6 +3655,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
         ? `<div class="bar split">${segs.map(([k, v]) => `<div class="fill ${k}" style="width:${r1((Math.max(0, v) / tot) * 100)}%"></div>`).join("")}</div>`
         : "";
       const valueHtml = `<div class="row"><span class="tv${earn ? " earn" : ""}">${esc(this._money(val))}</span>${bar}</div>`;
+      /* [OLD 2026-10-12 v1.9.0->v1.10.0] A dot and words for each figure, one per line in a narrow cell, so the cell was taller than the others.
       const dot = (cls, text) => `<span class="pr"><span class="dot ${cls}"></span>${esc(text)}</span>`;
       const many = segs.length > 1; // with one figure only, it is the headline, so its line gives the kWh instead
       const parts = [];
@@ -3640,6 +3663,26 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       if (std != null) parts.push(dot("st", many ? `${this._money(std)} standing` : "standing charge"));
       if (exp != null) parts.push(dot("s", many ? `${this._money(exp)} sold` : m.expToday != null ? `${this._kwh(m.expToday)} sold` : "sold"));
       t.push(this._tile(SW.cost, label, "", "", m.selfPowered != null ? `${Math.round(m.selfPowered * 100)}% self-powered` : "", valueHtml, parts.join(`<span class="gap"></span>`)));
+      [/OLD] */
+      // v1.10.0: the figures take one line, as the sum that gives the net — bought + standing − sold — each underlined in
+      // its bar colour (hover for the words), so the cell is as tall as its neighbours. With one figure only, it is the
+      // headline, so its line gives the kWh instead.
+      const dot = (cls, text) => `<span class="pr"><span class="dot ${cls}"></span>${esc(text)}</span>`;
+      const many = segs.length > 1;
+      let s1Html;
+      if (many) {
+        const am = (cls, v) => `<span class="am ${cls}">${esc(this._money(v))}</span>`;
+        const terms = [];
+        if (imp != null) terms.push(am("b", imp));
+        if (std != null) terms.push(`${terms.length ? "+ " : ""}${am("st", std)}`);
+        if (exp != null) terms.push(`− ${am("s", exp)}`);
+        const tip = [imp != null ? `bought ${this._money(imp)}` : "", std != null ? `standing charge ${this._money(std)}` : "", exp != null ? `sold ${this._money(exp)}` : ""]
+          .filter(Boolean).join(" · ");
+        s1Html = `<span class="eq" title="${esc(tip)}">${terms.map((x) => `<span class="pr">${x}</span>`).join(" ")}</span>`;
+      } else if (imp != null) s1Html = dot("b", m.impToday != null ? `${this._kwh(m.impToday)} bought` : "bought");
+      else if (std != null) s1Html = dot("st", "standing charge");
+      else s1Html = dot("s", m.expToday != null ? `${this._kwh(m.expToday)} sold` : "sold");
+      t.push(this._tile(SW.cost, label, "", "", m.selfPowered != null ? `${Math.round(m.selfPowered * 100)}% self-powered` : "", valueHtml, s1Html));
     } else if (m.selfPowered != null) {
       t.push(this._tile(SW.cost, "Self-powered", `${Math.round(m.selfPowered * 100)}%`, "of home use from solar and battery", ""));
     }
@@ -3651,6 +3694,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
   // added 2026-10-10 v1.8.0: one block per device — its name, live power, and a thin bar with its share of the home's use right now
   // (no bar without a home power sensor). The header has the devices' total. A device below 5 W is shown faded;
   // one whose sensor is unavailable shows a dash.
+  /* [OLD 2026-10-12 v1.9.0->v1.10.0] Name and share, then the power in 16 px, then a bar under it; no Other.
   _devicesHtml(m) {
     const list = deviceList(this._config);
     if (!list.length) return "";
@@ -3672,6 +3716,40 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       return `<div class="dv${p < 0.005 ? " off" : ""}"><div class="dn"><span>${esc(name)}</span>${share != null ? `<span class="dpc">${Math.round(share)}%</span>` : ""}</div>`
         + `<div class="dp">${this._power(p)}</div><div class="uline">${share != null ? `<div class="fill d" style="width:${r1(share)}%"></div>` : ""}</div></div>`;
     });
+    const head = known ? `${this._power(total)}${home ? ` · ${Math.round(pct(total))}% of home` : ""}` : "";
+    return `<div class="tile devs"><div class="tl">${SW.dev}<span>Devices</span>${head ? `<span class="tr">${esc(head)}</span>` : ""}</div>`
+      + `<div class="dvs">${items.join("")}</div></div>`;
+  }
+  [/OLD] */
+  // v1.10.0: each device is a caption — its name and share of the home's use right now, over a bar of that share — with
+  // its power under it in a smaller font. "Other" (on unless devices_other is false) is the home's power minus the listed
+  // devices, so the shares add up to 100 %; it needs a home power sensor and is drawn in grey.
+  _devicesHtml(m) {
+    const list = deviceList(this._config);
+    if (!list.length) return "";
+    const home = m.homeNow != null && m.homeNow > 0.01 ? m.homeNow : null;
+    const pct = (kw) => Math.min(100, (kw / home) * 100);
+    const item = (name, kw, cls, tip) => {
+      const share = kw != null && home ? pct(kw) : null;
+      const off = kw == null || kw < 0.005;
+      return `<div class="dv${off ? " off" : ""}${cls ? ` ${cls}` : ""}"${tip ? ` title="${esc(tip)}"` : ""}>`
+        + `<div class="dc">${share != null ? `<div class="dcf" style="width:${r1(share)}%"></div>` : ""}<span class="dcn">${esc(name)}</span>`
+        + `${share != null ? `<span class="dcp">${Math.round(share)}%</span>` : ""}</div>`
+        + `<div class="dpw">${kw != null ? this._power(kw) : "—"}</div></div>`;
+    };
+    let total = 0, known = 0;
+    const items = list.map((d) => {
+      const st = this._hass.states[d.entity];
+      const name = d.name || st?.attributes?.friendly_name || d.entity;
+      const kw = powerKW(st);
+      if (kw === null) return item(name, null, "", `${d.entity}: ${st ? st.state : "not found"}`);
+      const p = Math.max(0, kw);
+      total += p;
+      known++;
+      return item(name, p, "", "");
+    });
+    if (home && known && this._config.devices_other !== false)
+      items.push(item("Other", Math.max(0, home - total), "oth", "Home use not covered by the devices above"));
     const head = known ? `${this._power(total)}${home ? ` · ${Math.round(pct(total))}% of home` : ""}` : "";
     return `<div class="tile devs"><div class="tl">${SW.dev}<span>Devices</span>${head ? `<span class="tr">${esc(head)}</span>` : ""}</div>`
       + `<div class="dvs">${items.join("")}</div></div>`;

@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.12.0
+- New **Batteries** cell, above Devices, for any number of batteries (an EV, an e-bike, a phone, a power bank …). Each has a state of charge entity, an optional charging-state entity and a name, and is drawn as a battery-shaped bar filled to its charge: red up to 20 %, yellow at 60 %, green at 100 %, blended in between. While charging, stripes move across the fill and a bolt sits by the percentage; the header counts the batteries charging. **Batteries per row** sets the columns (3 by default).
+- The charging state can be on/off (binary sensor, switch, input boolean), a state such as "charging" ("not charging", "discharging" and "fully charged" count as not charging), or a number above zero (a charging power or current).
+
 ## v1.11.0
 - Money cell: the standing charge comes first — standing + bought − sold — in the sum and in the bar.
 - Devices: each device takes one line — its name, its share right after it, and its power at the right end — over a bar of its share. Where the text lies on the bar it switches to near-black or white, whichever reads better on the bar's colour.

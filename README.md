@@ -145,6 +145,43 @@ card_padding: 16             # optional, default 20
 home_color: "#F48FB1"        # optional; also solar_color, forecast_color, grid_color, export_color
 ```
 
+## More cards in this file
+
+The same file also holds two smaller cards. They are in the card picker as **Temperature (EWT)** and **Heating circuits (EWT)**, with their own editors; nothing extra to install.
+
+**Temperature** (`custom:ewt-temperature-card`): the name and a big temperature, a humidity pill when you pick a humidity sensor, and a graph of the temperature over the last hours in the lower half of the card (only the temperature is drawn), with a dot at now and the window's range in the corner. Its default size in a sections view is 4 columns × 2 rows.
+
+```yaml
+type: custom:ewt-temperature-card
+entity: sensor.utility_temperature
+humidity_entity: sensor.utility_humidity   # optional
+name: Utility                              # optional
+hours: 24                                  # optional, graph length
+show_range: true                           # optional
+color: "#F2994A"                           # optional, graph colour
+```
+
+**Heating circuits** (`custom:ewt-heating-circuits-card`): one row per circuit — icon, name, a strip showing when it ran over the last hours, and its state. The run going on now is in full colour; hover a run for its times. A state of `on`, `heat`, `heating`, `running`, `active` or `open` counts as running; a number counts as running above the circuit's `threshold` (0 if not set), and then shows its value with unit, such as a flow temperature. Without an `icon`, the entity's own icon is used if it has one. Its default size is 8 columns, with rows for the number of circuits.
+
+```yaml
+type: custom:ewt-heating-circuits-card
+hours: 12                                  # optional, timeline length
+title: Heating                             # optional
+circuits:
+  - entity: sensor.heating_ebusd_ctlv3_hc1pumpstatus
+    name: UFH
+    icon: mdi:heating-coil
+  - entity: sensor.heating_ebusd_ctlv3_hc2pumpstatus
+    name: Radiators
+    icon: mdi:radiator
+  - entity: sensor.heating_ebusd_ctlv3_hwcflowtemp
+    name: Hot Water
+    icon: mdi:water-boiler
+    threshold: 1                           # running while the flow temperature is above 1
+```
+
+Both read the recorder history when they load and every 5 minutes, and redraw as the states change.
+
 ## Good to know
 
 - **Time zone.** The clock and the timeline follow the time zone in your Home Assistant profile, not the device's. You can set a fixed `time_zone` instead.

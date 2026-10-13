@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.17.0
+- Temperature card: shorter cells (about 80 px; the card asks a sections view for fewer rows), with a tighter name and temperature block.
+- The humidity moved to the bottom right corner as a plain blue number, without a pill or unit (the cell's tooltip says it is the humidity), so the name now has the cell's full width.
+- In a very narrow cell the range drops its "24 h ·" part so it doesn't run into the humidity.
+- The editor no longer says a narrow card switches to 2 columns; it never did, and the configured columns are kept at every width.
+
 ## v1.16.0
 - Power flow cell: a line from each source to each place its power can go — solar to home, battery and grid; battery to home and grid; grid to home and battery — instead of four spokes to a hub. Lines turn with a curve near the middle and run in their own lanes, so none lies on another.
 - The power on each line is worked out from the solar, grid, battery and home readings (solar feeds the home first, then the battery, then the grid; the battery the home, then the grid; the grid the home, then the battery). Lines carrying power are lit in their source's colour with dots running from the source; the cell's tooltip lists each line's power.

@@ -81,7 +81,10 @@ const CARD_VERSION = "1.14.0";
 /* [OLD 2026-10-13 v1.15.0->v1.16.0] Version bump for the power flow cell with a line per source and destination.
 const CARD_VERSION = "1.15.0";
 [/OLD] */
+/* [OLD 2026-10-13 v1.16.0->v1.17.0] Version bump for shorter Temperature cells with the humidity at the bottom right.
 const CARD_VERSION = "1.16.0";
+[/OLD] */
+const CARD_VERSION = "1.17.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -4536,9 +4539,15 @@ const TEMP_LABELS = {
   show_range: "Show each graph's range", color: "Graph colour",
 };
 const TEMP_HELPERS = {
+  /* [OLD 2026-10-13 v1.16.0->v1.17.0] Did not say where the humidity shows.
   entities: "Each with its temperature sensor, an optional humidity sensor (shown as a value; only the temperature is drawn), a name and a graph colour.",
+  [/OLD] */
+  entities: "Each with its temperature sensor, an optional humidity sensor (its value, in %, at the cell's bottom right; only the temperature is drawn), a name and a graph colour.",
   hours: "24 hours if left empty.",
+  /* [OLD 2026-10-13 v1.16.0->v1.17.0] A narrow card never switched to 2 columns.
   columns: "3 if left empty. A very narrow card shows at most 2.",
+  [/OLD] */
+  columns: "3 if left empty.",
   color: "For sensors without their own colour; orange if left empty. To go back to it, delete the line in the code editor.",
 };
 const tempList = (c) => {
@@ -4594,11 +4603,20 @@ class EwtTemperatureCard extends EwtSmallCard {
   getCardSize() { return 3; }
   _cols() { const v = num(this._config?.columns); return Math.max(1, Math.min(6, Math.round(v === null ? 3 : v))); }
   _single() { return tempList(this._config || {}).length === 1 && !this._config?.title; }
+  /* [OLD 2026-10-13 v1.16.0->v1.17.0] Cells were 112 px tall at least.
   getGridOptions() {
     if (this._single()) return { columns: 4, rows: 2, min_columns: 3, min_rows: 2 };
     const n = Math.max(1, tempList(this._config || {}).length), cols = this._cols(), rowsN = Math.ceil(n / cols);
     const h = 24 + (this._config?.title ? 28 : 0) + rowsN * 112 + (rowsN - 1) * 8;
     return { columns: 12, rows: Math.max(2, Math.ceil(h / 64)), min_columns: 4, min_rows: 2 };
+  }
+  [/OLD] */
+  // v1.17.0: cells are 80 px at least; a sections-grid row is 56 px plus an 8 px gap, so n rows are 64·n − 8 px tall
+  getGridOptions() {
+    if (this._single()) return { columns: 4, rows: 2, min_columns: 3, min_rows: 2 };
+    const n = Math.max(1, tempList(this._config || {}).length), cols = this._cols(), rowsN = Math.ceil(n / cols);
+    const h = 24 + (this._config?.title ? 28 : 0) + rowsN * 80 + (rowsN - 1) * 8;
+    return { columns: 12, rows: Math.max(2, Math.ceil((h + 8) / 64)), min_columns: 4, min_rows: 2 };
   }
   _hours() { const v = num(this._config.hours); return v === null ? 24 : Math.max(1, Math.min(168, v)); }
   _historyIds() { return [...new Set(tempList(this._config).map((x) => x.entity))]; }
@@ -4606,6 +4624,7 @@ class EwtTemperatureCard extends EwtSmallCard {
     return tempList(this._config).some((x) => a.states[x.entity] !== b.states[x.entity] || (x.humidity && a.states[x.humidity] !== b.states[x.humidity]))
       || a.themes?.darkMode !== b.themes?.darkMode;
   }
+  /* [OLD 2026-10-13 v1.16.0->v1.17.0] Taller cells, the humidity as a pill at the top right.
   _style() {
     return `
 ha-card { container-type: inline-size; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 120px; }
@@ -4635,6 +4654,43 @@ ha-card.light .hum { background: rgba(43, 108, 176, 0.12); color: #2B6CB0; }
   .hum { order: 3; padding: 2px 6px; font-size: 11px; }
   .rg { left: 9px; }
 }
+`;
+  }
+  [/OLD] */
+  // v1.17.0: shorter cells — a tighter name and temperature block, the graph from 48 px down — and the humidity as a plain
+  // number at the bottom right, in blue, opposite the range
+  _style() {
+    return `
+ha-card { container-type: inline-size; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 100px; }
+ha-card.single { padding: 0; }
+.hd { font-size: 14px; font-weight: 500; color: var(--primary-text-color); }
+.cells { flex: 1; display: grid; grid-template-columns: repeat(var(--tcols, 3), minmax(0, 1fr)); grid-auto-rows: minmax(80px, 1fr); gap: 8px; }
+/* v1.17.0: no narrow-card switch to 2 columns — it never took effect (the --tcols set inline on .cells won), and 2
+   columns would need more rows than the card asks the sections grid for */
+.cell { position: relative; container-type: inline-size; min-width: 0; border-radius: 10px; overflow: hidden; background: color-mix(in srgb, var(--primary-text-color) 4%, transparent); }
+ha-card.single .cells { grid-auto-rows: 1fr; }
+ha-card.single .cell { border-radius: 0; background: none; }
+.gr { position: absolute; left: 0; right: 0; bottom: 0; top: max(48px, 42%); }
+.gr svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; }
+.dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--ewt-halo); }
+.top { position: relative; display: flex; align-items: flex-start; padding: 8px 10px 0; }
+.lft { display: flex; flex-direction: column; min-width: 0; }
+.nm { font-size: 12px; font-weight: 500; line-height: 14px; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.val { display: flex; align-items: baseline; gap: 2px; line-height: 32px; color: var(--primary-text-color); white-space: nowrap; }
+.num { font-size: 28px; font-weight: 400; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+.u { font-size: 13px; color: var(--secondary-text-color); }
+.rg, .hum { position: absolute; bottom: 5px; font-size: 10px; line-height: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; text-shadow: 0 0 3px var(--ewt-halo), 0 0 6px var(--ewt-halo); }
+.rg { left: 10px; color: var(--secondary-text-color); }
+.hum { right: 10px; font-size: 11px; font-weight: 500; color: #7FB3E6; }
+ha-card.light .hum { color: #2B6CB0; }
+@container (max-width: 150px) {
+  .top { padding: 6px 8px 0; }
+  .num { font-size: 24px; }
+  .val { line-height: 28px; }
+  .rg { left: 8px; }
+  .hum { right: 8px; }
+}
+@container (max-width: 125px) { .rg .rgh { display: none; } }
 `;
   }
   _html() {
@@ -4679,8 +4735,12 @@ ha-card.light .hum { background: rgba(43, 108, 176, 0.12); color: #2B6CB0; }
           + `<path d="${d} L100,${r1(last[1])} L100,100 L${r1(xy[0][0])},100 Z" fill="url(#${gid})"></path>`
           + `<path d="${d}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></path></svg>`
           + `<i class="dot" style="left:${r1(last[0])}%;top:${r1(last[1])}%;background:${col}"></i></div>`;
+        /* [OLD 2026-10-13 v1.16.0->v1.17.0] The hours part could not be hidden on its own.
         if (showRange) range = `<div class="rg">${hrs} h · ${rl.toFixed(prec)}–${rh.toFixed(prec)}${esc(deg.trim())}</div>`;
+        [/OLD] */
+        if (showRange) range = `<div class="rg"><span class="rgh">${hrs} h · </span>${rl.toFixed(prec)}–${rh.toFixed(prec)}${esc(deg.trim())}</div>`; // v1.17.0: hours part hides in a very narrow cell
       }
+      /* [OLD 2026-10-13 v1.16.0->v1.17.0] Humidity as a pill with % RH at the top right, beside the name.
       let hum = "";
       if (x.humidity) {
         const hv = num(hass.states[x.humidity]?.state);
@@ -4689,6 +4749,17 @@ ha-card.light .hum { background: rgba(43, 108, 176, 0.12); color: #2B6CB0; }
       const shown = v !== null ? v.toFixed(prec) : "—";
       return `<div class="cell" title="${esc(`${name}: ${shown} ${unit}`)}">${graph}<div class="top"><div class="lft"><div class="nm">${esc(name)}</div>`
         + `<div class="val"><span class="num">${shown}</span><span class="u">${esc(unit)}</span></div></div>${hum}</div>${range}</div>`;
+      [/OLD] */
+      // v1.17.0: the humidity is a plain number at the bottom right (the tooltip says what it is), so the name has the full width
+      let hum = "", humTip = "";
+      if (x.humidity) {
+        const hv = num(hass.states[x.humidity]?.state);
+        hum = `<div class="hum">${hv !== null ? Math.round(hv) : "—"}</div>`;
+        humTip = ` · humidity ${hv !== null ? `${Math.round(hv)}%` : "unknown"}`;
+      }
+      const shown = v !== null ? v.toFixed(prec) : "—";
+      return `<div class="cell" title="${esc(`${name}: ${shown} ${unit}${humTip}`)}">${graph}<div class="top"><div class="lft"><div class="nm">${esc(name)}</div>`
+        + `<div class="val"><span class="num">${shown}</span><span class="u">${esc(unit)}</span></div></div></div>${range}${hum}</div>`;
     }).join("");
     return `${c.title ? `<div class="hd">${esc(c.title)}</div>` : ""}`
       + `<div class="cells${!single && cols > 2 ? " many" : ""}" style="--tcols:${single ? 1 : cols}">${cells}</div>`;

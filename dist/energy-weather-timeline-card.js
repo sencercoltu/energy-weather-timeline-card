@@ -78,7 +78,10 @@ const CARD_VERSION = "1.13.0";
 /* [OLD 2026-10-12 v1.14.0->v1.15.0] Version bump for the power flow cell, the Solar cell with the forecast, and the solar strings row.
 const CARD_VERSION = "1.14.0";
 [/OLD] */
+/* [OLD 2026-10-13 v1.15.0->v1.16.0] Version bump for the power flow cell with a line per source and destination.
 const CARD_VERSION = "1.15.0";
+[/OLD] */
+const CARD_VERSION = "1.16.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -1501,8 +1504,9 @@ ha-card {
 .tile .bar.sb .sbm { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ewt-c-fc); }
 .tile .fcs { display: inline-block; margin-right: 4px; vertical-align: middle; line-height: 0; }
 .tile .fcs svg { width: 12px; }
+/* [OLD 2026-10-13 v1.15.0->v1.16.0] A hub with four spokes; the lines did not show where each source's power went.
 /* added 2026-10-12 v1.15.0: the power flow cell — solar, grid, battery and home joined at a hub; a line carrying power is lit in its
-   colour (--fc) with dots running the way the power goes */
+   colour (--fc) with dots running the way the power goes *\\/
 .tile.flow { position: relative; padding: 0; min-height: 84px; }
 .tile.flow .fw { position: absolute; inset: 8px 10px; }
 .tile .fl { position: absolute; --ln: color-mix(in srgb, var(--primary-text-color) 14%, transparent); }
@@ -1531,6 +1535,23 @@ ha-card {
 .tile .fn.hm { bottom: 0; left: calc(50% + 0.75px - 7px); }
 .tile .fn.g { left: 0; top: calc(50% + 0.75px - 7px); flex-direction: column; align-items: flex-start; gap: 2px; }
 .tile .fn.b { right: 0; top: calc(50% + 0.75px - 7px); flex-direction: column; align-items: flex-end; gap: 2px; }
+[/OLD] */
+/* v1.16.0: the power flow cell is one drawing, scaled to fit and centred: a line from each source to each place its power
+   can go, curved where it turns, each in its own lane; a line carrying power is lit in its source's colour (--fc) and
+   dots run along it */
+.tile.flow { position: relative; padding: 0; min-height: 84px; }
+.tile.flow svg.fg { position: absolute; left: 8px; top: 6px; width: calc(100% - 16px); height: calc(100% - 12px); overflow: visible; }
+.tile .fg .fp { fill: none; stroke: color-mix(in srgb, var(--primary-text-color) 13%, transparent); stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+.tile .fg .fp.on { stroke: var(--fc); stroke-width: 1.5; }
+.tile .fg .fdt { fill: var(--fc); }
+@media (prefers-reduced-motion: reduce) { .tile .fg .fdt { display: none; } }
+.tile .fg .fi { fill: none; stroke: var(--secondary-text-color); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.tile .fg .fn.on .fi { stroke: var(--fc); }
+.tile .fg .ff { fill: var(--secondary-text-color); stroke: none; }
+.tile .fg .fn.on .ff { fill: var(--fc); }
+.tile .fg .fb { stroke: none; }
+.tile .fg .fv { font-size: 9px; fill: var(--secondary-text-color); font-variant-numeric: tabular-nums; }
+.tile .fg .fn.on .fv { fill: var(--primary-text-color); }
 /* added 2026-10-12 v1.15.0: the solar strings row — the pairs AB, CD and EF side by side, each string a line over a thin bar */
 .tile.strs { grid-column: 1 / -1; gap: 6px; }
 .tile .sss { display: grid; grid-template-columns: repeat(var(--sgc, 3), minmax(0, 1fr)); gap: 6px 10px; }
@@ -3712,6 +3733,7 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       + `<div class="ts">${s1}&nbsp;</div><div class="ts">${s2}&nbsp;</div></div>`;
   }
 
+  /* [OLD 2026-10-13 v1.15.0->v1.16.0] Spokes from each node to a hub; replaced by a line per source and destination.
   // added 2026-10-12 v1.15.0: the power flow cell — solar at the top, grid on the left, battery on the right and home at the bottom, each
   // joined to a hub in the middle, with its power now in small figures. A line that carries power is lit in its colour
   // with dots running the way the power goes: into the hub from solar, grid import and battery discharge; out of it to
@@ -3752,6 +3774,84 @@ class EnergyWeatherTimelineCard extends HTMLElement {
       home != null ? `home ${this._power(home)}` : "",
     ].filter(Boolean).join(" · ");
     return `<div class="tile flow" role="img" aria-label="${esc(tip)}" title="${esc(tip)}"><div class="fw">${lines}<i class="fh"></i>${nodes}</div></div>`;
+  }
+  [/OLD] */
+  // v1.16.0: the power flow cell — solar at the top, grid on the left, battery on the right and home at the bottom, with a
+  // line from each source to each place its power can go: solar to grid, home and battery; battery to home and grid; grid
+  // to home and battery (grid and battery share one line, used either way). Lines turn with a curve near the middle and
+  // run in their own lanes, so none lies on another; only solar-to-home crosses grid-to-battery. The power on each line is
+  // worked out from the four readings — solar goes to the home first, then the battery, then the grid; the battery
+  // feeds the home, then the grid; the grid feeds the home, then the battery. A line carrying power is lit in its
+  // source's colour with dots running from the source; the drawing scales to the cell and stays centred. The dots'
+  // phase follows the clock, so a re-render on a state change doesn't make them jump back; with reduced motion only the
+  // lit lines show.
+  _flowHtml(m) {
+    if (this._config.show_flow === false) return "";
+    const sol = m.solarNow, home = m.homeNow, grid = m.gridNow, batt = m.battNow;
+    const soc = m.socNow != null ? Math.max(0, Math.min(100, m.socNow)) : null;
+    if (sol == null && home == null && grid == null && batt == null) return "";
+    const on = (kw) => kw != null && Math.abs(kw) >= 0.01;
+    // what goes where
+    const S = Math.max(0, sol ?? 0), I = Math.max(0, grid ?? 0), E = Math.max(0, -(grid ?? 0));
+    const Dis = Math.max(0, batt ?? 0), Chg = Math.max(0, -(batt ?? 0));
+    let s = S, h = home != null ? Math.max(0, home) : Math.max(0, S + I + Dis - E - Chg), c = Chg, e = E, d = Dis, i = I;
+    const take = (a, b) => Math.max(0, Math.min(a, b));
+    const f = {};
+    f.sh = take(s, h); s -= f.sh; h -= f.sh;
+    f.sb = take(s, c); s -= f.sb; c -= f.sb;
+    f.sg = take(s, e); s -= f.sg; e -= f.sg;
+    f.bh = take(d, h); d -= f.bh; h -= f.bh;
+    f.bg = take(d, e); d -= f.bg; e -= f.bg;
+    f.gh = take(i, h); i -= f.gh; h -= f.gh;
+    f.gb = take(i, c); i -= f.gb; c -= f.gb;
+    // the drawing, 112 × 72: solar icon at the top middle (50–62 × 1–13), home at the bottom middle (50–62 × 59–71), grid
+    // on the left (0–12 × 28–40), battery on the right (100–112 × 28–40). Lanes: x 50 / 56 / 62 down from solar and into
+    // home; y 28 (from solar), 34 (grid–battery) and 40 (to home) across.
+    const solC = "var(--ewt-c-solar)", homeC = "var(--ewt-c-home)", battC = "#4DD0A1", gridC = "var(--ewt-c-grid)";
+    const P = [
+      ["sg", "M50,14V20Q50,28 42,28H14", solC, f.sg, false, sol != null && grid != null],
+      ["sh", "M56,14V58", solC, f.sh, false, sol != null && (home != null || grid != null || batt != null)],
+      ["sb", "M62,14V20Q62,28 70,28H98", solC, f.sb, false, sol != null && (batt != null || soc != null)],
+      ["gh", "M14,40H42Q50,40 50,48V58", gridC, f.gh, false, grid != null],
+      ["bh", "M98,40H70Q62,40 62,48V58", battC, f.bh, false, batt != null],
+      // grid and battery share a line: from the grid while it charges the battery, from the battery while it exports
+      ["gb", "M14,34H98", f.bg >= f.gb ? battC : gridC, Math.max(f.gb, f.bg), f.bg > f.gb, grid != null && batt != null],
+    ].filter((p) => p[5]);
+    const now = Date.now() / 1000;
+    const dots = (id, len, rev) => {
+      const dur = Math.max(1.2, len / 30); // about 30 units a second, so short and long lines move at the same speed
+      return [0, dur / 2].map((o) => {
+        const begin = `-${((now + o) % dur).toFixed(2)}s`;
+        const dir = rev ? ` keyPoints="1;0" keyTimes="0;1"` : "";
+        return `<circle class="fdt" r="1.8" opacity="0"><animateMotion dur="${dur.toFixed(2)}s" begin="${begin}" repeatCount="indefinite" calcMode="linear"${dir}>`
+          + `<mpath href="#${id}" xlink:href="#${id}"></mpath></animateMotion>`
+          + `<animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.15;0.85;1" dur="${dur.toFixed(2)}s" begin="${begin}" repeatCount="indefinite"></animate></circle>`;
+      }).join("");
+    };
+    const LEN = { sg: 47, sh: 44, sb: 47, gh: 47, bh: 47, gb: 84 };
+    const lit = P.filter((p) => on(p[3])), idle = P.filter((p) => !on(p[3]));
+    const paths = idle.map((p) => `<path class="fp" d="${p[1]}"></path>`).join("")
+      + lit.map((p) => `<path id="${this._uid}-f${p[0]}" class="fp on" d="${p[1]}" style="--fc:${p[2]}"></path>`).join("")
+      + lit.map((p) => `<g style="--fc:${p[2]}">${dots(`${this._uid}-f${p[0]}`, LEN[p[0]], p[4])}</g>`).join("");
+    // the nodes: icon and power now
+    const icon = (x, y, body) => `<svg class="fi" x="${x}" y="${y}" width="12" height="12" viewBox="0 0 14 14">${body}</svg>`;
+    const sun = `<circle class="ff" cx="7" cy="7" r="2.6"/><path d="M7,.8V2.6M7,11.4V13.2M.8,7H2.6M11.4,7H13.2M2.6,2.6L3.9,3.9M10.1,10.1L11.4,11.4M2.6,11.4L3.9,10.1M10.1,3.9L11.4,2.6"/>`;
+    const pylon = `<path d="M7,1L3.6,13M7,1L10.4,13M2,4.4H12M3,8.4H11M4.6,8.4L9.8,13M9.4,8.4L4.2,13"/>`;
+    const house = `<path d="M1.6,7L7,2.2L12.4,7M3.2,5.6V12.6H10.8V5.6M5.8,12.6V9.2H8.2V12.6"/>`;
+    const fillH = soc != null ? r1((soc / 100) * 7.6) : 0;
+    const cell = `<rect x="3.6" y="2.6" width="6.8" height="10.6" rx="1.4"/><path d="M5.6,1.2H8.4"/>`
+      + `${fillH > 0 ? `<rect class="fb" x="5.1" y="${r1(11.7 - fillH)}" width="3.8" height="${fillH}" rx=".5" style="fill:${socColour(soc, m.reserve ?? 0)}"/>` : ""}`;
+    const node = (litNode, col, body, tx, ty, anchor, text) => `<g class="fn${litNode ? " on" : ""}" style="--fc:${col}">${body}`
+      + `<text class="fv" x="${tx}" y="${ty}"${anchor ? ` text-anchor="${anchor}"` : ""}>${esc(text)}</text></g>`;
+    const nodes = (sol != null ? node(on(sol), solC, icon(50, 1, sun), 65, 10, "", this._power(sol)) : "")
+      + (home != null ? node(on(home), homeC, icon(50, 59, house), 65, 69, "", this._power(home)) : "")
+      + (grid != null ? node(on(grid), grid < 0 ? "var(--ewt-c-exp)" : gridC, icon(0, 28, pylon), 0, 52, "", this._power(grid)) : "")
+      + (batt != null || soc != null ? node(on(batt), battC, icon(100, 28, cell), 112, 52, "end", batt != null ? this._power(batt) : `${Math.round(soc)}%`) : "");
+    const names = { sh: "solar → home", sb: "solar → battery", sg: "solar → grid", bh: "battery → home", bg: "battery → grid", gh: "grid → home", gb: "grid → battery" };
+    const tip = Object.keys(names).filter((k) => on(f[k])).map((k) => `${names[k]} ${this._power(f[k])}`)
+      .concat(soc != null ? [`battery ${Math.round(soc)}%`] : []).join(" · ") || "No power flowing";
+    return `<div class="tile flow" role="img" aria-label="${esc(tip)}" title="${esc(tip)}">`
+      + `<svg class="fg" viewBox="-1 -1 114 74" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${paths}${nodes}</svg></div>`;
   }
 
   // added 2026-10-12 v1.15.0: the solar strings row — each string's power now over a thin bar (its output against the strongest string's),

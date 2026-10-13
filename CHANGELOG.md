@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.16.0
+- Power flow cell: a line from each source to each place its power can go — solar to home, battery and grid; battery to home and grid; grid to home and battery — instead of four spokes to a hub. Lines turn with a curve near the middle and run in their own lanes, so none lies on another.
+- The power on each line is worked out from the solar, grid, battery and home readings (solar feeds the home first, then the battery, then the grid; the battery the home, then the grid; the grid the home, then the battery). Lines carrying power are lit in their source's colour with dots running from the source; the cell's tooltip lists each line's power.
+
 ## v1.15.0
 - New **power flow** cell where the Solar forecast cell was: solar, grid, battery and home joined in the middle, with their power now in small figures. Lines that carry power are lit in their colour and dots run the way the power goes (still lines with reduced motion). Turn it off with **Power flow cell** under **Show or hide**.
 - The **Solar** cell now holds the forecast too: today's production with a bar against today's forecast (a mark shows where the forecast expected it to be by now), solar power now at the top right, the forecast for today with what is still to come, and tomorrow's. The best hour moved to the cell's tooltip.

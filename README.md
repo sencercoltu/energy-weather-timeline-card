@@ -158,7 +158,7 @@ home_color: "#F48FB1"        # optional; also solar_color, forecast_color, grid_
 
 The same file also holds two smaller cards. They are in the card picker as **Temperature (EWT)** and **Heating circuits (EWT)**, with their own editors; nothing extra to install.
 
-**Temperature** (`custom:ewt-temperature-card`): any number of temperature sensors in one card, each in its own cell — the name and a big temperature, a humidity pill when you give it a humidity sensor, and a graph of the temperature over the last hours behind the lower half of the cell (only the temperature is drawn), with a dot at now and the window's range in the corner. The cells sit in a grid (`columns`, 3 by default; a very narrow card shows at most 2), under an optional `title`. A single sensor without a title fills the card on its own (4 columns × 2 rows in a sections view).
+**Temperature** (`custom:ewt-temperature-card`): any number of temperature sensors in one card, each in its own cell — the name and a big temperature, and a graph of the temperature over the last hours behind the lower half of the cell (only the temperature is drawn), with a dot at now and the window's range in the bottom left corner. Give it a humidity sensor and its value (in %) shows in blue in the bottom right corner. The cells sit in a grid (`columns`, 3 by default), under an optional `title`; in a sections view the card asks for enough rows to give each cell about 80 px, and you can give it more in the **Layout** tab. A single sensor without a title fills the card on its own (4 columns × 2 rows in a sections view).
 
 ```yaml
 type: custom:ewt-temperature-card

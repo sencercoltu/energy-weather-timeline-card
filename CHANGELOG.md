@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.18.0
+- Temperature card: a sensor can also be a thermostat (`climate`) or a water heater. The card uses its current temperature, for the value and for the graph's history, and the system's temperature unit.
+- A thermostat that reports humidity shows it in the bottom right corner without a humidity sensor; a thermostat or humidifier can also be picked as the humidity entity.
+
 ## v1.17.0
 - Temperature card: shorter cells (about 80 px; the card asks a sections view for fewer rows), with a tighter name and temperature block.
 - The humidity moved to the bottom right corner as a plain blue number, without a pill or unit (the cell's tooltip says it is the humidity), so the name now has the cell's full width.

@@ -84,7 +84,10 @@ const CARD_VERSION = "1.15.0";
 /* [OLD 2026-10-13 v1.16.0->v1.17.0] Version bump for shorter Temperature cells with the humidity at the bottom right.
 const CARD_VERSION = "1.16.0";
 [/OLD] */
+/* [OLD 2026-10-20 v1.17.0->v1.18.0] Version bump for thermostats and water heaters in the Temperature card.
 const CARD_VERSION = "1.17.0";
+[/OLD] */
+const CARD_VERSION = "1.18.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -4296,6 +4299,32 @@ async function fetchHistory(hass, ids, hours) {
   return out;
 }
 
+// added 2026-10-20 v1.18.0: an attribute's recorded values over the last `hours`, as [ms, value] per entity (the first row is the
+// value at the start). For thermostats and water heaters, whose temperature is the current_temperature attribute: their
+// state is the mode ("heat", "off" …), so the history is asked for with attributes, and a row without the attribute keeps
+// the value before it.
+async function fetchAttrHistory(hass, ids, hours, attr) {
+  const now = Date.now(), start = now - hours * HOUR;
+  const r = await hass.callWS({
+    type: "history/history_during_period", start_time: new Date(start).toISOString(), end_time: new Date(now).toISOString(),
+    entity_ids: ids, minimal_response: false, no_attributes: false, significant_changes_only: false,
+  });
+  const out = {};
+  for (const id of ids) {
+    let last = null;
+    out[id] = ((r && r[id]) || []).map((e) => {
+      if (e.a && e.a[attr] !== undefined && e.a[attr] !== null) last = e.a[attr];
+      return [Math.max(start, toMs(e.lu ?? e.lc)), last];
+    }).filter((p) => Number.isFinite(p[0]) && p[1] !== null);
+  }
+  return out;
+}
+// added 2026-10-20 v1.18.0: thermostats and water heaters keep their temperature in an attribute; thermostats and humidifiers their humidity
+const ATTR_TEMP = /^(climate|water_heater)\./;
+const ATTR_HUM = /^(climate|humidifier)\./;
+const tempOf = (id, st) => num(ATTR_TEMP.test(id || "") ? st?.attributes?.current_temperature : st?.state);
+const humOf = (id, st) => num(ATTR_HUM.test(id || "") ? st?.attributes?.current_humidity : st?.state);
+
 // n equal time buckets from t0 to t1: each the mean of the readings in it, else the last reading before it (null before the first)
 function resample(pts, t0, t1, n) {
   const step = (t1 - t0) / n, out = new Array(n).fill(null);
@@ -4384,11 +4413,15 @@ class EwtSmallCard extends HTMLElement {
     if (key === this._fetchKey && Date.now() - this._lastFetch < 5 * 60000) return;
     this._fetching = true;
     this._fetchKey = key;
+    /* [OLD 2026-10-20 v1.17.0->v1.18.0] Always the plain state history.
     fetchHistory(this._hass, ids, this._hours())
+    [/OLD] */
+    this._fetch(ids, this._hours()) // v1.18.0: through _fetch, which the Temperature card replaces
       .then((h) => { this._hist = h; })
       .catch((e) => console.warn(`${this.localName}: history failed`, e))
       .finally(() => { this._fetching = false; this._lastFetch = Date.now(); this._schedule(); });
   }
+  _fetch(ids, hours) { return fetchHistory(this._hass, ids, hours); } // added 2026-10-20 v1.18.0: the history fetch (a card can replace it)
   _timeFmt() {
     const h = this._hass;
     try {
@@ -4542,7 +4575,10 @@ const TEMP_HELPERS = {
   /* [OLD 2026-10-13 v1.16.0->v1.17.0] Did not say where the humidity shows.
   entities: "Each with its temperature sensor, an optional humidity sensor (shown as a value; only the temperature is drawn), a name and a graph colour.",
   [/OLD] */
+  /* [OLD 2026-10-20 v1.17.0->v1.18.0] Sensors only.
   entities: "Each with its temperature sensor, an optional humidity sensor (its value, in %, at the cell's bottom right; only the temperature is drawn), a name and a graph colour.",
+  [/OLD] */
+  entities: "Each with its temperature sensor — or a thermostat or water heater, for its current temperature — an optional humidity sensor (its value, in %, at the cell's bottom right; only the temperature is drawn), a name and a graph colour. A thermostat that reports humidity shows it without a humidity sensor.",
   hours: "24 hours if left empty.",
   /* [OLD 2026-10-13 v1.16.0->v1.17.0] A narrow card never switched to 2 columns.
   columns: "3 if left empty. A very narrow card shows at most 2.",
@@ -4568,8 +4604,12 @@ class EwtTemperatureCard extends EwtSmallCard {
           selector: { object: {
             multiple: true, label_field: "name", description_field: "entity",
             fields: {
+              /* [OLD 2026-10-20 v1.17.0->v1.18.0] Sensors only.
               entity: { label: "Temperature sensor", required: true, selector: { entity: { filter: { domain: "sensor" } } } },
               humidity_entity: { label: "Humidity sensor (optional)", selector: { entity: { filter: { domain: "sensor" } } } },
+              [/OLD] */
+              entity: { label: "Temperature sensor or thermostat", required: true, selector: { entity: { filter: [{ domain: "sensor" }, { domain: "climate" }, { domain: "water_heater" }] } } },
+              humidity_entity: { label: "Humidity sensor (optional)", selector: { entity: { filter: [{ domain: "sensor" }, { domain: "climate" }, { domain: "humidifier" }] } } },
               name: { label: "Name", selector: { text: {} } },
               color: { label: "Graph colour", selector: { color_rgb: {} } },
             },
@@ -4620,6 +4660,15 @@ class EwtTemperatureCard extends EwtSmallCard {
   }
   _hours() { const v = num(this._config.hours); return v === null ? 24 : Math.max(1, Math.min(168, v)); }
   _historyIds() { return [...new Set(tempList(this._config).map((x) => x.entity))]; }
+  // added 2026-10-20 v1.18.0: thermostats and water heaters have their temperature's history in the current_temperature attribute
+  async _fetch(ids, hours) {
+    const attr = ids.filter((id) => ATTR_TEMP.test(id)), plain = ids.filter((id) => !ATTR_TEMP.test(id));
+    const [a, b] = await Promise.all([
+      plain.length ? fetchHistory(this._hass, plain, hours) : {},
+      attr.length ? fetchAttrHistory(this._hass, attr, hours, "current_temperature") : {},
+    ]);
+    return { ...a, ...b };
+  }
   _changed(a, b) {
     return tempList(this._config).some((x) => a.states[x.entity] !== b.states[x.entity] || (x.humidity && a.states[x.humidity] !== b.states[x.humidity]))
       || a.themes?.darkMode !== b.themes?.darkMode;
@@ -4703,10 +4752,17 @@ ha-card.light .hum { color: #2B6CB0; }
     const showRange = c.show_range !== false;
     const cells = list.map((x, k) => {
       const st = hass.states[x.entity];
+      /* [OLD 2026-10-20 v1.17.0->v1.18.0] Read the state, which for a thermostat is its mode.
       const unit = st?.attributes?.unit_of_measurement || "°C";
       const deg = unit.startsWith("°") ? "°" : ` ${unit}`;
       const prec = hass.entities?.[x.entity]?.display_precision ?? 1;
       const v = num(st?.state);
+      [/OLD] */
+      // v1.18.0: a thermostat or water heater has no unit of its own (it uses the system's) and its temperature is an attribute
+      const unit = st?.attributes?.unit_of_measurement || (ATTR_TEMP.test(x.entity) ? hass.config?.unit_system?.temperature : null) || "°C";
+      const deg = unit.startsWith("°") ? "°" : ` ${unit}`;
+      const prec = hass.entities?.[x.entity]?.display_precision ?? 1;
+      const v = tempOf(x.entity, st);
       const name = x.name || st?.attributes?.friendly_name || x.entity;
       const col = esc(colourCss(x.color) || colourCss(c.color) || "#F2994A");
 
@@ -4751,9 +4807,17 @@ ha-card.light .hum { color: #2B6CB0; }
         + `<div class="val"><span class="num">${shown}</span><span class="u">${esc(unit)}</span></div></div>${hum}</div>${range}</div>`;
       [/OLD] */
       // v1.17.0: the humidity is a plain number at the bottom right (the tooltip says what it is), so the name has the full width
+      /* [OLD 2026-10-20 v1.17.0->v1.18.0] Humidity only from a sensor's state.
       let hum = "", humTip = "";
       if (x.humidity) {
         const hv = num(hass.states[x.humidity]?.state);
+      [/OLD] */
+      // v1.18.0: a thermostat or humidifier as the humidity entity gives its current_humidity; with no humidity entity, a
+      // thermostat's own current_humidity shows when it has one
+      let hum = "", humTip = "";
+      const hId = x.humidity || (ATTR_HUM.test(x.entity) && num(st?.attributes?.current_humidity) !== null ? x.entity : null);
+      if (hId) {
+        const hv = humOf(hId, hass.states[hId]);
         hum = `<div class="hum">${hv !== null ? Math.round(hv) : "—"}</div>`;
         humTip = ` · humidity ${hv !== null ? `${Math.round(hv)}%` : "unknown"}`;
       }

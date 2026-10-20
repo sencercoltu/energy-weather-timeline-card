@@ -158,7 +158,7 @@ home_color: "#F48FB1"        # optional; also solar_color, forecast_color, grid_
 
 The same file also holds two smaller cards. They are in the card picker as **Temperature (EWT)** and **Heating circuits (EWT)**, with their own editors; nothing extra to install.
 
-**Temperature** (`custom:ewt-temperature-card`): any number of temperature sensors in one card, each in its own cell — the name and a big temperature, and a graph of the temperature over the last hours behind the lower half of the cell (only the temperature is drawn), with a dot at now and the window's range in the bottom left corner. Give it a humidity sensor and its value (in %) shows in blue in the bottom right corner. The cells sit in a grid (`columns`, 3 by default), under an optional `title`; in a sections view the card asks for enough rows to give each cell about 80 px, and you can give it more in the **Layout** tab. A single sensor without a title fills the card on its own (4 columns × 2 rows in a sections view).
+**Temperature** (`custom:ewt-temperature-card`): any number of temperature sensors in one card, each in its own cell — the name and a big temperature, and a graph of the temperature over the last hours behind the lower half of the cell (only the temperature is drawn), with a dot at now and the window's range in the bottom left corner. Give it a humidity sensor and its value (in %) shows in blue in the bottom right corner. Instead of a temperature sensor you can pick a thermostat (`climate`) or a water heater: the card uses its current temperature, now and in the graph. A thermostat that reports humidity shows it on its own, and a thermostat or humidifier can also be the humidity entity. The cells sit in a grid (`columns`, 3 by default), under an optional `title`; in a sections view the card asks for enough rows to give each cell about 80 px, and you can give it more in the **Layout** tab. A single sensor without a title fills the card on its own (4 columns × 2 rows in a sections view).
 
 ```yaml
 type: custom:ewt-temperature-card
@@ -173,6 +173,7 @@ entities:
     name: Utility                              # optional
   - entity: sensor.kitchen_temperature
     humidity_entity: sensor.kitchen_humidity
+  - entity: climate.living_room                # a thermostat: its current temperature (and humidity, if it reports one)
   - entity: sensor.heating_ebusd_hwc_storage_temp
     name: HW Temp
     color: "#6F8FB8"                           # optional, this sensor's graph colour

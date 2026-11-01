@@ -181,7 +181,7 @@ entities:
     color: "#6F8FB8"                           # optional, this sensor's graph colour
 ```
 
-**Heating circuits** (`custom:ewt-heating-circuits-card`): one row per circuit — icon, name, a strip showing when it ran over the last hours, and its state. The run going on now is in full colour; hover a run for its times. A state of `on`, `heat`, `heating`, `running`, `active` or `open` counts as running; a number counts as running above the circuit's `threshold` (0 if not set), and then shows its value with unit, such as a flow temperature. Without an `icon`, the entity's own icon is used if it has one. Its default size is 8 columns, with rows for the number of circuits.
+**Heating circuits** (`custom:ewt-heating-circuits-card`): one row per circuit — icon, name, a strip showing when it ran over the last hours, and its state. The run going on now is in full colour; hover a run for its times. A state of `on`, `heat`, `heating`, `running`, `active` or `open` counts as running; a number counts as running above the circuit's `threshold` (0 if not set). Give a circuit a `flow_entity` and its flow temperature shows instead of On/Off — in the running colour while the circuit runs, grey when not. A circuit whose own entity is a temperature with a `threshold` (hot water) shows that temperature the same way, running or not. Without an `icon`, the entity's own icon is used if it has one. Its default size is 8 columns, with rows for the number of circuits.
 
 ```yaml
 type: custom:ewt-heating-circuits-card
@@ -190,14 +190,16 @@ title: Heating                             # optional
 circuits:
   - entity: sensor.heating_ebusd_ctlv3_hc1pumpstatus
     name: UFH
+    flow_entity: sensor.heating_ebusd_ctlv3_hc1flowtemp   # optional, shown instead of On/Off
     icon: mdi:heating-coil
   - entity: sensor.heating_ebusd_ctlv3_hc2pumpstatus
     name: Radiators
+    flow_entity: sensor.heating_ebusd_ctlv3_hc2flowtemp   # optional, shown instead of On/Off
     icon: mdi:radiator
   - entity: sensor.heating_ebusd_ctlv3_hwcflowtemp
     name: Hot Water
     icon: mdi:water-boiler
-    threshold: 1                           # running while the flow temperature is above 1
+    threshold: 1                           # running while the flow temperature is above 1; the temperature always shows
 ```
 
 Both read the recorder history when they load and every 5 minutes, and redraw as the states change.

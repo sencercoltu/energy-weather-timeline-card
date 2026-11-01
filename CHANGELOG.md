@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.20.0
+- Heating circuits: each circuit can have a **Flow temperature** entity (`flow_entity`). Its temperature shows instead of On/Off — in the running colour while the circuit runs (from its on/off entity), grey when not.
+- A circuit whose own entity is a temperature with an **On above** value (hot water) now shows that temperature whether it is running or not, coloured the same way, instead of Off.
+
 ## v1.19.0
 - Temperature card: a thermostat or water heater shows its desired temperature after the actual one, after a slash, small and top-aligned with the unit under it ("21.4 / 21"; a range in heat/cool mode; nothing while it's off).
 - New **Desired temperature** entity per sensor, for a temperature sensor: a number or input number helper, a setpoint sensor, or a thermostat.

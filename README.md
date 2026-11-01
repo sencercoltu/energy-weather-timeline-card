@@ -158,7 +158,7 @@ home_color: "#F48FB1"        # optional; also solar_color, forecast_color, grid_
 
 The same file also holds two smaller cards. They are in the card picker as **Temperature (EWT)** and **Heating circuits (EWT)**, with their own editors; nothing extra to install.
 
-**Temperature** (`custom:ewt-temperature-card`): any number of temperature sensors in one card, each in its own cell — the name and a big temperature, and a graph of the temperature over the last hours behind the lower half of the cell (only the temperature is drawn), with a dot at now and the window's range in the bottom left corner. Give it a humidity sensor and its value (in %) shows in blue in the bottom right corner. Instead of a temperature sensor you can pick a thermostat (`climate`) or a water heater: the card uses its current temperature, now and in the graph. A thermostat that reports humidity shows it on its own, and a thermostat or humidifier can also be the humidity entity. The cells sit in a grid (`columns`, 3 by default), under an optional `title`; in a sections view the card asks for enough rows to give each cell about 80 px, and you can give it more in the **Layout** tab. A single sensor without a title fills the card on its own (4 columns × 2 rows in a sections view).
+**Temperature** (`custom:ewt-temperature-card`): any number of temperature sensors in one card, each in its own cell — the name and a big temperature, and a graph of the temperature over the last hours behind the lower half of the cell (only the temperature is drawn), with a dot at now and the window's range in the bottom left corner. Give it a humidity sensor and its value (in %) shows in blue in the bottom right corner. Instead of a temperature sensor you can pick a thermostat (`climate`) or a water heater: the card uses its current temperature, now and in the graph. A thermostat that reports humidity shows it on its own, and a thermostat or humidifier can also be the humidity entity. A thermostat or water heater also shows its desired temperature after the actual one — "21.4 / 21", the desired one small at the top with the unit under it (a range such as "/ 19–23.5" in heat/cool mode, nothing while it's off). For a temperature sensor, pick a **Desired temperature** entity: a number or input number helper, a setpoint sensor, or the thermostat that heats the room. A thermostat's name is coloured by what it is doing — yellow while heating, light blue while cooling, the theme's grey when idle or off — taken from its `hvac_action`, or from its mode if it doesn't report one; a sensor whose desired temperature is a thermostat follows that thermostat. Set your own colours with `heating_color`, `cooling_color` and `idle_color`. The cells sit in a grid (`columns`, 3 by default), under an optional `title`; in a sections view the card asks for enough rows to give each cell about 80 px, and you can give it more in the **Layout** tab. A single sensor without a title fills the card on its own (4 columns × 2 rows in a sections view).
 
 ```yaml
 type: custom:ewt-temperature-card
@@ -167,13 +167,15 @@ hours: 24                                  # optional, graph length
 columns: 3                                 # optional
 show_range: true                           # optional
 color: "#F2994A"                           # optional, graph colour for sensors without their own
+heating_color: "#FFC107"                   # optional, a thermostat's name while heating; also cooling_color, idle_color
 entities:
   - entity: sensor.utility_temperature
     humidity_entity: sensor.utility_humidity   # optional
     name: Utility                              # optional
   - entity: sensor.kitchen_temperature
     humidity_entity: sensor.kitchen_humidity
-  - entity: climate.living_room                # a thermostat: its current temperature (and humidity, if it reports one)
+    target_entity: input_number.kitchen_setpoint   # optional, desired temperature
+  - entity: climate.living_room                # a thermostat: its current and desired temperature (and humidity, if it reports one)
   - entity: sensor.heating_ebusd_hwc_storage_temp
     name: HW Temp
     color: "#6F8FB8"                           # optional, this sensor's graph colour

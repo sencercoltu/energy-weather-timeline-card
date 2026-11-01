@@ -90,7 +90,10 @@ const CARD_VERSION = "1.17.0";
 /* [OLD 2026-11-01 v1.18.0->v1.19.0] Version bump for the desired temperature and the heating colours in the Temperature card.
 const CARD_VERSION = "1.18.0";
 [/OLD] */
+/* [OLD 2026-11-01 v1.19.0->v1.20.0] Version bump for flow temperatures in the Heating circuits card.
 const CARD_VERSION = "1.19.0";
+[/OLD] */
+const CARD_VERSION = "1.20.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -4920,13 +4923,19 @@ ha-card.light { --ewt-heat: #B78103; --ewt-cool: #0277BD; }
 
 const CIRCUIT_LABELS = { title: "Title (optional)", circuits: "Circuits", hours: "Timeline length", color: "Running colour" };
 const CIRCUIT_HELPERS = {
+  /* [OLD 2026-11-01 v1.19.0->v1.20.0] No flow temperature.
   circuits: "Each circuit's entity (a pump state, valve, switch …), a name and an icon. A number counts as running above its 'On above' value (0 if empty), e.g. a hot water flow temperature with 1.",
+  [/OLD] */
+  circuits: "Each circuit's entity (a pump state, valve, switch …), a name, an icon and an optional flow temperature, shown instead of On/Off — in the running colour while the circuit runs, grey when not. A number counts as running above its 'On above' value (0 if empty), e.g. a hot water flow temperature with 1; its temperature then shows whether it runs or not.",
   hours: "12 hours if left empty.",
   color: "Orange if left empty. To go back to it, delete the line in the code editor.",
 };
 const ON_STATES = ["on", "heat", "heating", "true", "yes", "running", "active", "open", "pumping", "charging"];
 const circuitList = (c) => (Array.isArray(c.circuits) ? c.circuits : [])
+  /* [OLD 2026-11-01 v1.19.0->v1.20.0] No flow temperature entity.
   .map((x) => (typeof x === "string" ? { entity: x } : x && typeof x === "object" ? { entity: x.entity, name: x.name, icon: x.icon, threshold: num(x.threshold) } : null))
+  [/OLD] */
+  .map((x) => (typeof x === "string" ? { entity: x } : x && typeof x === "object" ? { entity: x.entity, name: x.name, icon: x.icon, flow: x.flow_entity, threshold: num(x.threshold) } : null)) // v1.20.0: flow_entity
   .filter((x) => x && typeof x.entity === "string" && x.entity);
 // running or not from a state: on/heat/running … for text, above the threshold for a number; null when unknown
 const circuitOn = (state, threshold) => {
@@ -4953,6 +4962,7 @@ class EwtCircuitsCard extends EwtSmallCard {
               entity: { label: "Entity", required: true, selector: { entity: {} } },
               name: { label: "Name", selector: { text: {} } },
               icon: { label: "Icon", selector: { icon: {} } },
+              flow_entity: { label: "Flow temperature (optional)", selector: { entity: { filter: [{ domain: "sensor" }, { domain: "climate" }, { domain: "water_heater" }] } } }, // added 2026-11-01 v1.20.0
               threshold: { label: "On above (numbers only)", selector: { number: { mode: "box", step: 0.1 } } },
             },
           } },
@@ -4984,7 +4994,13 @@ class EwtCircuitsCard extends EwtSmallCard {
   }
   _hours() { const v = num(this._config.hours); return v === null ? 12 : Math.max(1, Math.min(72, v)); }
   _historyIds() { return circuitList(this._config).map((x) => x.entity); }
+  /* [OLD 2026-11-01 v1.19.0->v1.20.0] Did not watch the flow temperatures.
   _changed(a, b) { return this._historyIds().some((id) => a.states[id] !== b.states[id]) || a.themes?.darkMode !== b.themes?.darkMode; }
+  [/OLD] */
+  _changed(a, b) { // v1.20.0: and each flow temperature
+    return circuitList(this._config).some((x) => a.states[x.entity] !== b.states[x.entity] || (x.flow && a.states[x.flow] !== b.states[x.flow]))
+      || a.themes?.darkMode !== b.themes?.darkMode;
+  }
   _style() {
     return `
 ha-card { padding: 10px 12px 8px; display: flex; flex-direction: column; gap: 6px; }
@@ -5029,11 +5045,26 @@ ha-card { padding: 10px 12px 8px; display: flex; flex-direction: column; gap: 6p
         return `<i class="sg${live ? " live" : ""}" style="left:${(((a - t0) / span) * 100).toFixed(2)}%;width:${(((b - a) / span) * 100).toFixed(2)}%"`
           + ` title="${esc(`${tf.format(a)}–${live ? "now" : tf.format(b)}`)}"></i>`;
       }).join("");
+      /* [OLD 2026-11-01 v1.19.0->v1.20.0] On/Off for an on/off entity; a number only while running, Off otherwise.
       const n = strictNum(st?.state), unit = st?.attributes?.unit_of_measurement || "";
       const label = on === null ? "—" : !on ? "Off" : n !== null && unit ? `${Math.round(n)}${unit.startsWith("°") ? "°" : ` ${unit}`}` : "On";
       const icon = x.icon || st?.attributes?.icon || "";
       return `<div class="nm${on ? " on" : ""}">${icon ? `<ha-icon icon="${esc(icon)}"></ha-icon>` : ""}<span>${esc(name)}</span></div>`
         + `<div class="sp">${segs}</div><span class="st${on ? " on" : ""}">${esc(label)}</span>`;
+      [/OLD] */
+      // v1.20.0: the state column shows a temperature whenever there is one — the flow temperature entity's, else the
+      // circuit's own number when it has a unit (a hot water flow temperature with an 'On above' value) — in the running
+      // colour while the circuit runs and grey when not; without one, On or Off as before. A number without a unit (a
+      // pump state of 0 / 1) still shows On or Off.
+      const fSt = x.flow ? hass.states[x.flow] : null;
+      const fv = x.flow ? tempOf(x.flow, fSt) : strictNum(st?.state);
+      const fUnit = x.flow ? fSt?.attributes?.unit_of_measurement || (ATTR_TEMP.test(x.flow) ? "°" : "") : st?.attributes?.unit_of_measurement || "";
+      const temp = fv !== null && (x.flow || fUnit) ? `${Math.round(fv)}${fUnit.startsWith("°") ? "°" : fUnit ? ` ${fUnit}` : ""}` : null;
+      const label = temp ?? (on === null ? "—" : on ? "On" : "Off");
+      const stTip = `${name}: ${on === null ? "state unknown" : on ? "running" : "not running"}${temp && x.flow ? ` · flow ${temp}` : ""}`;
+      const icon = x.icon || st?.attributes?.icon || "";
+      return `<div class="nm${on ? " on" : ""}">${icon ? `<ha-icon icon="${esc(icon)}"></ha-icon>` : ""}<span>${esc(name)}</span></div>`
+        + `<div class="sp">${segs}</div><span class="st${on ? " on" : ""}" title="${esc(stTip)}">${esc(label)}</span>`;
     }).join("");
     const ticks = `<span></span><div class="tk"><span>−${H} h</span><span class="mid">−${r1(H / 2)} h</span><span>now</span></div><span></span>`;
     return `${c.title ? `<div class="hd">${esc(c.title)}</div>` : ""}<div class="bd">${rows}${ticks}</div>`;

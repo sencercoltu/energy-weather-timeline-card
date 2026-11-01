@@ -87,7 +87,10 @@ const CARD_VERSION = "1.16.0";
 /* [OLD 2026-10-20 v1.17.0->v1.18.0] Version bump for thermostats and water heaters in the Temperature card.
 const CARD_VERSION = "1.17.0";
 [/OLD] */
+/* [OLD 2026-11-01 v1.18.0->v1.19.0] Version bump for the desired temperature and the heating colours in the Temperature card.
 const CARD_VERSION = "1.18.0";
+[/OLD] */
+const CARD_VERSION = "1.19.0";
 const CARD_TAG = "energy-weather-timeline-card";
 const HOUR = 3600000;
 
@@ -4324,6 +4327,31 @@ const ATTR_TEMP = /^(climate|water_heater)\./;
 const ATTR_HUM = /^(climate|humidifier)\./;
 const tempOf = (id, st) => num(ATTR_TEMP.test(id || "") ? st?.attributes?.current_temperature : st?.state);
 const humOf = (id, st) => num(ATTR_HUM.test(id || "") ? st?.attributes?.current_humidity : st?.state);
+// added 2026-11-01 v1.19.0: the desired temperature as [t] or, for a thermostat keeping a range, [low, high]: a thermostat's or water
+// heater's `temperature` attribute (or target_temp_low/high), else the entity's state (a number or input number helper,
+// a setpoint sensor). null when there is none, as for a thermostat that is off.
+const targetOf = (id, st) => {
+  if (!id || !st) return null;
+  if (ATTR_TEMP.test(id)) {
+    const t = num(st.attributes?.temperature);
+    if (t !== null) return [t];
+    const lo = num(st.attributes?.target_temp_low), hi = num(st.attributes?.target_temp_high);
+    return lo !== null && hi !== null ? [lo, hi] : null;
+  }
+  const v = num(st.state);
+  return v === null ? null : [v];
+};
+// added 2026-11-01 v1.19.0: what a thermostat is doing, from its hvac_action ("heating", "preheating", "cooling", "idle", "off" …) or,
+// when it doesn't report one, its mode ("heat", "cool", "off" …): "heat", "cool" or "idle"; null for anything else
+const climateAction = (id, st) => {
+  if (!st || !/^climate\./.test(id || "")) return null;
+  const a = String(st.attributes?.hvac_action ?? "").toLowerCase();
+  if (a) return /heat/.test(a) ? "heat" : a === "cooling" ? "cool" : "idle";
+  const m = String(st.state ?? "").toLowerCase();
+  return m === "heat" ? "heat" : m === "cool" ? "cool" : "idle";
+};
+// added 2026-11-01 v1.19.0: a desired temperature as short as it can be — 21, 21.5
+const fmtTarget = (t) => (Math.abs(t - Math.round(t)) < 0.05 ? String(Math.round(t)) : t.toFixed(1));
 
 // n equal time buckets from t0 to t1: each the mean of the readings in it, else the last reading before it (null before the first)
 function resample(pts, t0, t1, n) {
@@ -4570,6 +4598,7 @@ ha-card.light .hum { background: rgba(43, 108, 176, 0.12); color: #2B6CB0; }
 const TEMP_LABELS = {
   title: "Title (optional)", entities: "Sensors", hours: "Graph length", columns: "Sensors per row",
   show_range: "Show each graph's range", color: "Graph colour",
+  heating_color: "Name while heating", cooling_color: "Name while cooling", idle_color: "Name while idle or off", // added 2026-11-01 v1.19.0
 };
 const TEMP_HELPERS = {
   /* [OLD 2026-10-13 v1.16.0->v1.17.0] Did not say where the humidity shows.
@@ -4578,7 +4607,11 @@ const TEMP_HELPERS = {
   /* [OLD 2026-10-20 v1.17.0->v1.18.0] Sensors only.
   entities: "Each with its temperature sensor, an optional humidity sensor (its value, in %, at the cell's bottom right; only the temperature is drawn), a name and a graph colour.",
   [/OLD] */
+  /* [OLD 2026-11-01 v1.18.0->v1.19.0] No desired temperature.
   entities: "Each with its temperature sensor — or a thermostat or water heater, for its current temperature — an optional humidity sensor (its value, in %, at the cell's bottom right; only the temperature is drawn), a name and a graph colour. A thermostat that reports humidity shows it without a humidity sensor.",
+  [/OLD] */
+  entities: "Each with its temperature sensor — or a thermostat or water heater, for its current temperature — an optional humidity sensor (its value, in %, at the cell's bottom right; only the temperature is drawn), an optional desired temperature (a number, input number or setpoint sensor; a thermostat or water heater shows its own without one), a name and a graph colour. A thermostat that reports humidity shows it without a humidity sensor.",
+  heating_color: "A thermostat's name takes these colours while it heats, cools, or does neither (idle or off): yellow, light blue and the theme's grey if left empty.", // added 2026-11-01 v1.19.0
   hours: "24 hours if left empty.",
   /* [OLD 2026-10-13 v1.16.0->v1.17.0] A narrow card never switched to 2 columns.
   columns: "3 if left empty. A very narrow card shows at most 2.",
@@ -4588,7 +4621,10 @@ const TEMP_HELPERS = {
 };
 const tempList = (c) => {
   const list = (Array.isArray(c.entities) ? c.entities : [])
+    /* [OLD 2026-11-01 v1.18.0->v1.19.0] No desired-temperature entity.
     .map((x) => (typeof x === "string" ? { entity: x } : x && typeof x === "object" ? { entity: x.entity, humidity: x.humidity_entity, name: x.name, color: x.color } : null))
+    [/OLD] */
+    .map((x) => (typeof x === "string" ? { entity: x } : x && typeof x === "object" ? { entity: x.entity, humidity: x.humidity_entity, target: x.target_entity, name: x.name, color: x.color } : null)) // v1.19.0: target_entity
     .filter((x) => x && typeof x.entity === "string" && x.entity);
   if (typeof c.entity === "string" && c.entity) list.unshift({ entity: c.entity, humidity: c.humidity_entity, name: c.name, color: c.color });
   return list;
@@ -4610,6 +4646,7 @@ class EwtTemperatureCard extends EwtSmallCard {
               [/OLD] */
               entity: { label: "Temperature sensor or thermostat", required: true, selector: { entity: { filter: [{ domain: "sensor" }, { domain: "climate" }, { domain: "water_heater" }] } } },
               humidity_entity: { label: "Humidity sensor (optional)", selector: { entity: { filter: [{ domain: "sensor" }, { domain: "climate" }, { domain: "humidifier" }] } } },
+              target_entity: { label: "Desired temperature (optional)", selector: { entity: { filter: [{ domain: "sensor" }, { domain: "number" }, { domain: "input_number" }, { domain: "climate" }, { domain: "water_heater" }] } } }, // added 2026-11-01 v1.19.0
               name: { label: "Name", selector: { text: {} } },
               color: { label: "Graph colour", selector: { color_rgb: {} } },
             },
@@ -4624,6 +4661,14 @@ class EwtTemperatureCard extends EwtSmallCard {
           ],
         },
         { name: "color", selector: { color_rgb: {} } },
+        { // added 2026-11-01 v1.19.0: the name's colour while a thermostat heats, cools, or does neither
+          name: "", type: "grid", flatten: true,
+          schema: [
+            { name: "heating_color", selector: { color_rgb: {} } },
+            { name: "cooling_color", selector: { color_rgb: {} } },
+            { name: "idle_color", selector: { color_rgb: {} } },
+          ],
+        },
       ],
       computeLabel: (sch) => TEMP_LABELS[sch.name],
       computeHelper: (sch) => TEMP_HELPERS[sch.name],
@@ -4670,7 +4715,11 @@ class EwtTemperatureCard extends EwtSmallCard {
     return { ...a, ...b };
   }
   _changed(a, b) {
+    /* [OLD 2026-11-01 v1.18.0->v1.19.0] Did not watch a desired-temperature entity.
     return tempList(this._config).some((x) => a.states[x.entity] !== b.states[x.entity] || (x.humidity && a.states[x.humidity] !== b.states[x.humidity]))
+    [/OLD] */
+    return tempList(this._config).some((x) => a.states[x.entity] !== b.states[x.entity] || (x.humidity && a.states[x.humidity] !== b.states[x.humidity])
+      || (x.target && a.states[x.target] !== b.states[x.target])) // v1.19.0: and the desired temperature
       || a.themes?.darkMode !== b.themes?.darkMode;
   }
   /* [OLD 2026-10-13 v1.16.0->v1.17.0] Taller cells, the humidity as a pill at the top right.
@@ -4740,12 +4789,33 @@ ha-card.light .hum { color: #2B6CB0; }
   .hum { right: 8px; }
 }
 @container (max-width: 125px) { .rg .rgh { display: none; } }
+/* added 2026-11-01 v1.19.0: the desired temperature after a slash, small and top-aligned, with the unit under it at the baseline; a
+   thermostat's name coloured by what it is doing (the editor's colours are set on the card and win over these) */
+ha-card { --ewt-heat: #FFC107; --ewt-cool: #4FC3F7; }
+ha-card.light { --ewt-heat: #B78103; --ewt-cool: #0277BD; }
+.val.tg { align-items: flex-start; }
+.val .side { display: flex; flex-direction: column; justify-content: space-between; align-self: stretch; padding: 4px 0 5px 3px; }
+.val .side .tgt { font-size: 12px; line-height: 11px; color: var(--secondary-text-color); font-variant-numeric: tabular-nums; }
+.val .side .u { line-height: 11px; }
+.nm.heat { color: var(--ewt-heat); }
+.nm.cool { color: var(--ewt-cool); }
+.nm.idle { color: var(--ewt-idle, var(--secondary-text-color)); }
+@container (max-width: 150px) {
+  .val .side { padding: 3px 0 4px 2px; }
+  .val .side .tgt { font-size: 11px; line-height: 10px; }
+  .val .side .u { font-size: 11px; line-height: 10px; }
+}
 `;
   }
   _html() {
     const c = this._config, hass = this._hass, list = tempList(c);
     const single = list.length === 1 && !c.title;
     this._card.classList.toggle("single", single);
+    // added 2026-11-01 v1.19.0: the name colours from the editor, for both themes
+    for (const [k, v] of [["--ewt-heat", c.heating_color], ["--ewt-cool", c.cooling_color], ["--ewt-idle", c.idle_color]]) {
+      const css = colourCss(v);
+      if (css) this._card.style.setProperty(k, css); else this._card.style.removeProperty(k);
+    }
     if (!list.length) return `<div class="note">Add temperature sensors in the card editor.</div>`;
     const cols = this._cols();
     const hrs = this._hours(), now = Date.now(), t0 = now - hrs * HOUR, n = 72;
@@ -4764,6 +4834,12 @@ ha-card.light .hum { color: #2B6CB0; }
       const prec = hass.entities?.[x.entity]?.display_precision ?? 1;
       const v = tempOf(x.entity, st);
       const name = x.name || st?.attributes?.friendly_name || x.entity;
+      // added 2026-11-01 v1.19.0: the desired temperature (the sensor's own entity, else the thermostat's or water heater's) and what
+      // the thermostat is doing (the cell's own thermostat, else one picked as the desired temperature)
+      const tId = x.target || (ATTR_TEMP.test(x.entity) ? x.entity : null);
+      const tgt = targetOf(tId, tId ? hass.states[tId] : null);
+      const tTxt = tgt ? tgt.map(fmtTarget).join("–") : "";
+      const act = climateAction(x.entity, st) || (x.target ? climateAction(x.target, hass.states[x.target]) : null);
       const col = esc(colourCss(x.color) || colourCss(c.color) || "#F2994A");
 
       // the graph, in a 100×100 box stretched over the lower part of the cell: the line keeps its width, the dot at now is
@@ -4822,8 +4898,18 @@ ha-card.light .hum { color: #2B6CB0; }
         humTip = ` · humidity ${hv !== null ? `${Math.round(hv)}%` : "unknown"}`;
       }
       const shown = v !== null ? v.toFixed(prec) : "—";
+      /* [OLD 2026-11-01 v1.18.0->v1.19.0] No desired temperature; the name always grey.
       return `<div class="cell" title="${esc(`${name}: ${shown} ${unit}${humTip}`)}">${graph}<div class="top"><div class="lft"><div class="nm">${esc(name)}</div>`
         + `<div class="val"><span class="num">${shown}</span><span class="u">${esc(unit)}</span></div></div></div>${range}${hum}</div>`;
+      [/OLD] */
+      // v1.19.0: with a desired temperature, "/ 21" sits after the temperature, small and top-aligned, and the unit under it;
+      // a thermostat's name takes the colour of what it is doing
+      const valHtml = tgt
+        ? `<div class="val tg"><span class="num">${shown}</span><span class="side"><span class="tgt">/ ${esc(tTxt)}</span><span class="u">${esc(unit)}</span></span></div>`
+        : `<div class="val"><span class="num">${shown}</span><span class="u">${esc(unit)}</span></div>`;
+      const tip = `${name}: ${shown} ${unit}${tgt ? ` · desired ${tTxt}${deg.trim()}` : ""}${act === "heat" ? " · heating" : act === "cool" ? " · cooling" : ""}${humTip}`;
+      return `<div class="cell" title="${esc(tip)}">${graph}<div class="top"><div class="lft"><div class="nm${act ? ` ${act}` : ""}">${esc(name)}</div>`
+        + `${valHtml}</div></div>${range}${hum}</div>`;
     }).join("");
     return `${c.title ? `<div class="hd">${esc(c.title)}</div>` : ""}`
       + `<div class="cells${!single && cols > 2 ? " many" : ""}" style="--tcols:${single ? 1 : cols}">${cells}</div>`;

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.19.0
+- Temperature card: a thermostat or water heater shows its desired temperature after the actual one, after a slash, small and top-aligned with the unit under it ("21.4 / 21"; a range in heat/cool mode; nothing while it's off).
+- New **Desired temperature** entity per sensor, for a temperature sensor: a number or input number helper, a setpoint sensor, or a thermostat.
+- A thermostat's name is coloured by what it is doing: yellow while heating, light blue while cooling, the theme's grey when idle or off (from its hvac_action, else its mode). A sensor whose desired temperature is a thermostat follows that thermostat. The colours are settable: **Name while heating**, **Name while cooling** and **Name while idle or off** (`heating_color`, `cooling_color`, `idle_color`).
+
 ## v1.18.0
 - Temperature card: a sensor can also be a thermostat (`climate`) or a water heater. The card uses its current temperature, for the value and for the graph's history, and the system's temperature unit.
 - A thermostat that reports humidity shows it in the bottom right corner without a humidity sensor; a thermostat or humidifier can also be picked as the humidity entity.
